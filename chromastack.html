@@ -1,0 +1,1742 @@
+<!doctype html>
+<!--
+  chromastack - copyright (C) 2026 Garrick Salois
+  Licensed under the GNU Affero General Public License v3.0; see LICENSE.
+  The embedded AD5M machine and filament settings are derived from the
+  Flashforge / Orca-Flashforge printer profiles, which are AGPL-3.0.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chromastack</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c1f26; --line:#2c313b; --fg:#e6e9ef; --dim:#9aa3b2;
+    --accent:#6ea8fe;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.45 ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+  header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;
+         gap:16px;align-items:center;flex-wrap:wrap}
+  h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.02em}
+  h1 span{color:var(--dim);font-weight:400}
+  .views{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:12px 16px}
+  .view{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+        padding:8px;display:flex;flex-direction:column;gap:6px;min-width:0}
+  .view h2{font-size:11px;margin:0;color:var(--dim);font-weight:500;
+           text-transform:uppercase;letter-spacing:.06em}
+  canvas{width:100%;height:auto;display:block;background:#000;border-radius:3px;
+         image-rendering:pixelated}
+  #cSrc{image-rendering:auto}
+  .controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));
+            gap:12px;padding:0 16px 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+  .card h3{font-size:11px;margin:0 0 8px;color:var(--dim);font-weight:500;
+           text-transform:uppercase;letter-spacing:.06em}
+  .row{display:flex;align-items:center;gap:8px;margin:5px 0}
+  .row label{flex:0 0 96px;color:var(--dim)}
+  .row input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
+  .row .val{flex:0 0 46px;text-align:right;font-variant-numeric:tabular-nums}
+  .row select,.row input[type=number]{background:#12141a;color:var(--fg);
+       border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit}
+  .row input[type=number]{width:70px}
+  .row select{flex:1}
+  input[type=color]{width:30px;height:22px;padding:0;border:1px solid var(--line);
+       border-radius:4px;background:none;cursor:pointer}
+  .chhead{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .chead .name{font-weight:600;flex:1}
+  .stack{display:flex;flex-direction:column-reverse;gap:4px;margin-bottom:8px}
+  .stackrow{display:flex;align-items:center;gap:6px;background:#12141a;
+            border:1px solid var(--line);border-radius:4px;padding:4px 8px}
+  .stackrow .sw{width:12px;height:12px;border-radius:2px;flex:0 0 auto}
+  .stackrow .lbl{flex:1;color:var(--dim)}
+  button{background:#242832;color:var(--fg);border:1px solid var(--line);
+         border-radius:4px;padding:4px 9px;font:inherit;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#0d1017;border-color:var(--accent);font-weight:600}
+  button:disabled{opacity:.4;cursor:default}
+  .mini{padding:1px 6px;font-size:11px;line-height:1.5}
+  pre{background:#12141a;border:1px solid var(--line);border-radius:4px;padding:9px;
+      margin:0;font:11px/1.5 ui-monospace,Consolas,monospace;color:var(--dim);
+      max-height:230px;overflow:auto;white-space:pre-wrap}
+  .note{color:var(--dim);font-size:11px;margin-top:6px}
+  .drop{position:fixed;inset:0;background:rgba(110,168,254,.14);border:2px dashed var(--accent);
+        display:none;align-items:center;justify-content:center;font-size:16px;z-index:9}
+  .drop.on{display:flex}
+  body:not(.adv-on) .adv{display:none}
+  .views canvas{cursor:zoom-in}
+  .zoom{position:fixed;inset:0;background:#0b0d11;display:none;overflow:auto;z-index:20;
+        padding:14px;cursor:zoom-out}
+  .zoom.on{display:block}
+  .zoom canvas{image-rendering:pixelated;display:block;margin:0 auto;width:auto;height:auto}
+  .zoomtip{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:21;
+           background:#1c1f26;border:1px solid var(--line);border-radius:4px;
+           padding:3px 10px;color:var(--dim);font-size:11px;pointer-events:none}
+  .advtoggle{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--dim);
+             cursor:pointer;user-select:none}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>chromastack <span>— channel image → banded filament relief</span></h1>
+  <input autocomplete="off" type="file" id="file" accept="image/*">
+  <span class="note" id="srcinfo">no image loaded</span>
+  <label class="advtoggle"><input autocomplete="off" type="checkbox" id="adv"> Advanced</label>
+</header>
+
+<div class="views">
+  <div class="view"><h2>Source</h2><canvas id="cSrc"></canvas></div>
+  <div class="view"><h2>Height map</h2><canvas id="cHgt"></canvas></div>
+  <div class="view"><h2>Simulated print</h2><canvas id="cSim"></canvas></div>
+</div>
+
+<div class="controls">
+
+  <div class="card" id="channels"><h3>Channels</h3></div>
+
+  <div class="card">
+    <h3>Stack order (bottom → top)</h3>
+    <div class="stack" id="stack"></div>
+    <div class="row">
+      <label>Collision</label>
+      <select autocomplete="off" id="collision">
+        <option value="brightest">Brightest wins</option>
+        <option value="priority" selected>Priority (topmost wins)</option>
+      </select>
+    </div>
+    <div class="note" id="collnote"></div>
+  </div>
+
+  <div class="card">
+    <h3>Print</h3>
+    <div class="row"><label>Layer height</label>
+      <input autocomplete="off" type="number" id="layerH" value="0.08" step="0.01" min="0.02" max="0.3"><span class="val">mm</span></div>
+    <div class="row"><label>First layer</label>
+      <input autocomplete="off" type="number" id="firstLayer" value="0.2" step="0.01" min="0.02" max="0.4"><span class="val">mm</span></div>
+    <div class="note">Both must match Flash Studio, or the layer numbers in the
+      swap plan will not line up with the layers you see in the slicer.</div>
+    <div class="row"><label>Base (black)</label>
+      <input autocomplete="off" type="range" id="base" min="1" max="12" value="3"><span class="val" id="baseV">3</span></div>
+    <div class="row adv"><label>Interlayer</label>
+      <input autocomplete="off" type="range" id="inter" min="0" max="10" value="0"><span class="val" id="interV">0</span></div>
+    <div class="row"><label>Min island</label>
+      <input autocomplete="off" type="range" id="minIsland" min="1" max="40" step="1" value="1">
+      <span class="val" id="minIslandV">off</span></div>
+    <div class="row"><label>Tiny islands</label>
+      <select autocomplete="off" id="islandMode">
+        <option value="grow" selected>Grow to fit</option>
+        <option value="remove">Remove</option>
+      </select></div>
+    <div class="row"><label>Grow by</label>
+      <input autocomplete="off" type="range" id="growBy" min="1" max="3" step="0.5" value="1">
+      <span class="val" id="growByV">1.0</span></div>
+    <div class="note" id="islnote"></div>
+    <div class="row"><label>Denoise</label>
+      <input autocomplete="off" type="range" id="denoiseMm" min="0" max="2" step="0.05" value="0">
+      <span class="val" id="denoiseMmV">0.00</span></div>
+    <div class="note" id="mednote"></div>
+    <div class="row adv"><label>Min feature</label>
+      <input autocomplete="off" type="range" id="minFeat" min="0" max="2" step="0.05" value="0">
+      <span class="val" id="minFeatV">0.00</span></div>
+    <div class="note adv">Min feature = the smallest island of colour allowed, in mm.
+      Islands narrower than this are deleted and filled in by whatever surrounded
+      them; everything else is left untouched. Off by default — anything narrower
+      than the nozzle is dropped by the slicer anyway. Raise it only if the print
+      looks speckled, because on a detailed image it eats real structure fast.</div>
+    <div class="row adv"><label>Black filament</label>
+      <input autocomplete="off" type="color" id="blackCol" value="#111111"></div>
+    <div class="row"><label>Plaque width</label>
+      <input autocomplete="off" type="number" id="widthMm" value="150" step="5" min="10" max="220"><span class="val">mm</span></div>
+    <div class="row"><label>Bed</label>
+      <select autocomplete="off" id="bedType">
+        <option>Textured PEI Plate</option>
+        <option>Cool Plate</option>
+        <option>Engineering Plate</option>
+        <option>High Temp Plate</option>
+        <option>Supertack Plate</option>
+      </select></div>
+    <div class="row"><label>Hole</label>
+      <input autocomplete="off" type="checkbox" id="holeOn">
+      <input autocomplete="off" type="number" id="holeDia" value="4" step="0.5" min="0.5" max="60"><span class="val">mm</span></div>
+    <div class="row"><label>Hole across</label>
+      <input autocomplete="off" type="range" id="holeX" min="0" max="100" step="0.5" value="50">
+      <span class="val" id="holeXV">50</span></div>
+    <div class="row"><label>Hole down</label>
+      <input autocomplete="off" type="range" id="holeY" min="0" max="100" step="0.5" value="6">
+      <span class="val" id="holeYV">6</span></div>
+    <div class="note">Hole position is a percentage of the plaque measured from
+      the top-left of the picture, so it stays put if you resize. It is punched
+      through after the colours are decided, so it removes material without
+      shifting anything, and it shows as grey in the simulated print because it
+      is a void rather than black filament.</div>
+    <div class="row"><label>Nozzle</label>
+      <select autocomplete="off" id="nozzle">
+        <option value="0.25">0.25 mm</option>
+        <option value="0.4" selected>0.4 mm</option>
+        <option value="0.6">0.6 mm</option>
+        <option value="0.8">0.8 mm</option>
+      </select></div>
+    <div class="note" id="noznote"></div>
+    <div class="row"><label>Dot size</label>
+      <input autocomplete="off" type="range" id="dotMm" min="0.15" max="1.2" step="0.05" value="0.4">
+      <span class="val" id="dotMmV">0.40</span></div>
+    <div class="note" id="sizenote"></div>
+    <div class="note">Dot size = how wide one square of the picture is on the print.
+      It sets how accurately edges are placed, and sampling finer than the nozzle
+      genuinely helps there — a 0.4 mm bead still follows a path positioned to
+      about 0.01 mm, so finer dots give smoother boundaries. What the nozzle
+      limits is different: the smallest island that can exist at all. Anything
+      narrower than one bead is dropped by the slicer no matter how fine the dots.
+      Dots sharpen what survives; plaque size decides what survives. File size
+      grows as 1/dot².</div>
+    <div class="note">Interlayer = black layers between channel bands, so each band's
+      gradient reads against fresh black instead of the colour below it. Set 0 to disable.</div>
+  </div>
+
+  <div class="card">
+    <h3>Output</h3>
+    <div class="row">
+      <button class="primary" id="btn3mf" disabled>Export 3MF (AD5M)</button>
+      <button id="btnStl" disabled>Export STL</button>
+      <button id="btnPlan" disabled>Save swap plan</button>
+      <button id="btnPng" disabled>Save height map</button>
+    </div>
+    <div class="note">The 3MF carries the mesh, the filament colours and the
+      pauses, so Flash Studio opens it ready to slice — no manual band setup.
+      Open it with File &gt; Open Project, not Import. The STL is the plain mesh
+      and needs the swap plan entered by hand.</div>
+    <pre id="plan">Load an image to begin.</pre>
+  </div>
+
+</div>
+
+<div class="drop" id="drop">drop an image</div>
+<div class="zoom" id="zoom"><div class="zoomtip" id="zoomtip"></div><canvas id="zc"></canvas></div>
+
+<script>
+"use strict";
+
+// td = transmission ("hide") distance in mm: how much of this filament it takes
+// before what's underneath stops showing through. A property of the SPOOL, not
+// of the image — measure it once with a step wedge. Defaults are plausible PLA
+// guesses and nothing more.
+const CH = [
+  {key:"R", idx:0, name:"Red",   on:true, thr:40, min:0, max:6, td:1.40, grad:true, col:"#c0392b"},
+  {key:"G", idx:1, name:"Green", on:true, thr:40, min:0, max:6, td:1.10, grad:true, col:"#27ae60"},
+  {key:"B", idx:2, name:"Blue",  on:true, thr:40, min:0, max:6, td:1.20, grad:true, col:"#2e4fa8"},
+];
+const byKey = k => CH.find(c => c.key === k);
+
+// Black hides much faster than the colours; only used to shade interlayers.
+const BLACK_TD = 0.60;
+
+let order = ["B","R","G"];              // bottom -> top
+let G = {layerH:0.08, firstLayer:0.2, base:3, inter:0, collision:"priority",
+         blackCol:"#111111", widthMm:150, nozzle:"0.4", dotMm:0.4, minFeat:0, denoiseMm:0, minIsland:1, islandMode:"grow", growBy:1,
+         bedType:"Textured PEI Plate", holeOn:false, holeDia:4, holeX:50, holeY:6};
+
+// Layer count -> millimetres. The first layer is usually thicker than the rest,
+// and if the model ignores that, every band boundary lands mid-layer and the
+// slicer rounds it somewhere unpredictable. Building the geometry with the same
+// arithmetic the slicer uses keeps "layer N" meaning the same thing in both.
+const zOf = n => n <= 0 ? 0 : G.firstLayer + (n - 1) * G.layerH;
+
+const BED = 220;                        // AD5M plate, mm
+const MAX_DOTS = 900;                   // long-side sample cap, keeps the STL sane
+
+let img = null;                          // HTMLImageElement
+// Denoising happens on the SOURCE, before the downsample, because the dot grid
+// cannot express a window narrower than one dot: at 0.4 mm dots the smallest
+// possible median is 3x3 = 1.2 mm, which already costs 61% of the islands and
+// 4 points of agreement with the image. Working at source resolution puts the
+// quantum at a source pixel instead, which is where the useful 0.2-1.0 mm range
+// lives. Measured on a test image: 0.4 mm removes 20% of islands for 0.6 points,
+// 0.8 mm removes 40% for 2.1.
+//
+// It is far too slow to redo on every slider move, so the filtered source is
+// cached and rebuilt only when the image or the radius actually changes.
+const WORK_MAX = 2048;                   // cap on the long side we filter at
+let work = null;                         // {canvas, w, h, data} source at working res
+let filt = null;                         // {canvas, r} filtered copy, keyed by radius
+let srcName = "image";
+let grid = null;                         // {w,h,heights:Int32Array}
+let bandInfo = null;
+
+const $ = id => document.getElementById(id);
+const hex2rgb = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+
+/* ---------------------------------------------------------------- bands --- */
+
+function computeBands(){
+  const active = order.filter(k => byKey(k).on);
+  const bands = {};
+  let z = G.base;
+  active.forEach((k,i) => {
+    const c = byKey(k);
+    if (i > 0) z += G.inter;
+    bands[k] = {start:z, min:c.min, max:c.max};
+    z += c.max;
+  });
+  return {bands, active, total:z};
+}
+
+/* Winning channel for one pixel, or null for background. */
+function pick(r, g, b, active){
+  let hit = null, bestT = -1;
+  const vals = [r,g,b];
+  if (G.collision === "priority"){
+    for (let i = active.length - 1; i >= 0; i--){        // topmost first
+      const c = byKey(active[i]), v = vals[c.idx];
+      if (v >= c.thr) return {k:c.key, t:(v - c.thr) / Math.max(1, 255 - c.thr)};
+    }
+    return null;
+  }
+  for (const k of active){
+    const c = byKey(k), v = vals[c.idx];
+    if (v < c.thr) continue;
+    const t = (v - c.thr) / Math.max(1, 255 - c.thr);
+    if (t > bestT){ bestT = t; hit = k; }
+  }
+  return hit === null ? null : {k:hit, t:bestT};
+}
+
+// Delete ONLY the colour islands too narrow to print. Every other sample comes
+// through bit-identical — this is not a blur, and it does not touch the edges
+// of regions that are big enough to survive.
+//
+//   1. mark samples sitting at the centre of a solid (2r+1)^2 block of their
+//      own label — i.e. places where that colour is genuinely r wide
+//   2. flood-fill connected regions; a region lives if it contains any such
+//      sample, dies if it is thin everywhere
+//   3. regrow the survivors into the dead regions (nearest-label flood), so
+//      holes are filled by whatever actually surrounded them
+//
+// Border samples can't pass step 1 (no room for the block), which only matters
+// if a colour region runs off the edge of the plate.
+function dropTinyIslands(lab, w, h, nLabels, r){
+  const n = w * h;
+  if (r < 1) return lab;
+  const side = 2*r + 1, need = side * side;
+  if (w < side || h < side) return lab;
+
+  const solid = new Uint8Array(n);
+  const I = new Int32Array((w+1) * (h+1));
+  for (let L = 0; L < nLabels; L++){
+    I.fill(0);
+    for (let j = 0; j < h; j++){
+      let run = 0;
+      for (let i = 0; i < w; i++){
+        if (lab[j*w + i] === L) run++;
+        I[(j+1)*(w+1) + i+1] = I[j*(w+1) + i+1] + run;
+      }
+    }
+    for (let j = r; j < h - r; j++){
+      const rowA = (j+r+1) * (w+1), rowB = (j-r) * (w+1);
+      for (let i = r; i < w - r; i++){
+        if (lab[j*w + i] !== L) continue;
+        const i1 = i + r + 1, i0 = i - r;
+        if (I[rowA+i1] - I[rowB+i1] - I[rowA+i0] + I[rowB+i0] === need) solid[j*w + i] = 1;
+      }
+    }
+  }
+
+  const comp = new Int32Array(n).fill(-1);
+  const keep = new Uint8Array(n);          // indexed by component id
+  const stack = new Int32Array(n);
+  let cid = 0;
+  for (let s = 0; s < n; s++){
+    if (comp[s] !== -1) continue;
+    const L = lab[s];
+    let top = 0;
+    stack[top++] = s; comp[s] = cid;
+    while (top){
+      const p = stack[--top];
+      if (solid[p]) keep[cid] = 1;
+      const x = p % w, y = (p - x) / w;
+      if (x > 0   && comp[p-1] === -1 && lab[p-1] === L){ comp[p-1] = cid; stack[top++] = p-1; }
+      if (x < w-1 && comp[p+1] === -1 && lab[p+1] === L){ comp[p+1] = cid; stack[top++] = p+1; }
+      if (y > 0   && comp[p-w] === -1 && lab[p-w] === L){ comp[p-w] = cid; stack[top++] = p-w; }
+      if (y < h-1 && comp[p+w] === -1 && lab[p+w] === L){ comp[p+w] = cid; stack[top++] = p+w; }
+    }
+    cid++;
+  }
+
+  const out = Int32Array.from(lab);
+  for (let p = 0; p < n; p++) if (!keep[comp[p]]) out[p] = -1;
+
+  const q = new Int32Array(n);
+  let qh = 0, qt = 0;
+  for (let p = 0; p < n; p++){
+    if (out[p] === -1) continue;
+    const x = p % w, y = (p - x) / w;
+    if ((x > 0 && out[p-1] === -1) || (x < w-1 && out[p+1] === -1) ||
+        (y > 0 && out[p-w] === -1) || (y < h-1 && out[p+w] === -1)) q[qt++] = p;
+  }
+  while (qh < qt){
+    const p = q[qh++], L = out[p];
+    const x = p % w, y = (p - x) / w;
+    if (x > 0   && out[p-1] === -1){ out[p-1] = L; q[qt++] = p-1; }
+    if (x < w-1 && out[p+1] === -1){ out[p+1] = L; q[qt++] = p+1; }
+    if (y > 0   && out[p-w] === -1){ out[p-w] = L; q[qt++] = p-w; }
+    if (y < h-1 && out[p+w] === -1){ out[p+w] = L; q[qt++] = p+w; }
+  }
+  for (let p = 0; p < n; p++) if (out[p] === -1) out[p] = lab[p];
+  return out;
+}
+
+// Median filter over the sampled grid, per channel, applied before any channel
+// decides anything. Photon noise in a fluorescence image flips the winning
+// channel from dot to dot, and every flip becomes another island the nozzle has
+// to fly to and string between. Measured on a 375x375 export: a 3x3 median cut
+// island visits by ~70% while altering 7% of the labels, where Min feature had
+// to rewrite half the picture to get the same reduction. Median rather than a
+// blur because it deletes isolated specks without softening the edges of real
+// structure.
+//
+// Histogram method with a running median (Huang): sliding the window one dot
+// sideways only adds and drops one column, and the median itself moves by a
+// step or two, so cost per dot barely grows with radius. Edges clamp, and since
+// clamping is monotone the slide stays correct right up to the border.
+function medianFilter(data, w, h, r){
+  if (r < 1) return data;
+  const out = new Uint8ClampedArray(data);
+  const hist = new Int32Array(256);
+  const side = 2*r + 1, need = ((side*side) >> 1) + 1;
+  const cl = (v, m) => v < 0 ? 0 : (v > m ? m : v);
+  for (let c = 0; c < 3; c++){
+    for (let j = 0; j < h; j++){
+      hist.fill(0);
+      for (let dj = -r; dj <= r; dj++){
+        const row = cl(j+dj, h-1) * w;
+        for (let di = -r; di <= r; di++) hist[data[(row + cl(di, w-1))*4 + c]]++;
+      }
+      let med = 0, less = 0;                    // `less` = count strictly below med
+      for (let i = 0; i < w; i++){
+        if (i > 0){
+          const dropX = cl(i-r-1, w-1), addX = cl(i+r, w-1);
+          for (let dj = -r; dj <= r; dj++){
+            const row = cl(j+dj, h-1) * w;
+            const o = data[(row + dropX)*4 + c], a = data[(row + addX)*4 + c];
+            hist[o]--; if (o < med) less--;
+            hist[a]++; if (a < med) less++;
+          }
+        }
+        while (less >= need){ med--; less -= hist[med]; }
+        while (less + hist[med] < need){ less += hist[med]; med++; }
+        out[(j*w + i)*4 + c] = med;
+      }
+    }
+  }
+  return out;
+}
+
+
+// Radius in working-source pixels. Rounds to 0 when the source is too coarse to
+// resolve the requested width, which is a genuine no-op rather than a silent one.
+function denoiseR(){
+  if (!work || G.denoiseMm <= 0) return 0;
+  // window is 2r+1 source pixels, so solve that for r rather than halving the
+  // width — otherwise every setting lands one pixel wider than asked for
+  const px = G.widthMm / work.w;
+  return Math.max(0, Math.round((G.denoiseMm / px - 1) / 2));
+}
+
+function buildWork(im){
+  const k = Math.min(1, WORK_MAX / Math.max(im.width, im.height));
+  const w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const x = c.getContext("2d", {willReadFrequently:true});
+  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
+  x.drawImage(im, 0, 0, w, h);
+  work = {canvas:c, w, h, data:x.getImageData(0, 0, w, h).data};
+  filt = null;
+}
+
+function ensureFiltered(r){
+  if (filt && filt.r === r) return;
+  if (r < 1){ filt = null; return; }
+  const out = medianFilter(work.data, work.w, work.h, r);
+  const c = document.createElement("canvas");
+  c.width = work.w; c.height = work.h;
+  c.getContext("2d").putImageData(new ImageData(out, work.w, work.h), 0, 0);
+  filt = {canvas:c, r};
+}
+
+// The stack as a list of z segments: which filament owns which layers, black
+// interlayers included. Band z-ranges are global — blue owns layers 4-9 across
+// the WHOLE plate — so a column reaching into red necessarily has a full blue
+// band under it, there being no other material at those layers.
+function stackSegments(bands, active){
+  const segs = [];
+  let prev = G.base;
+  for (const k of active){
+    const b = bands[k], c = byKey(k);
+    if (b.start > prev)
+      segs.push({start:prev, n:b.start - prev, rgb:hex2rgb(G.blackCol), td:BLACK_TD});
+    segs.push({start:b.start, n:c.max, rgb:hex2rgb(c.col), td:c.td});
+    prev = b.start + c.max;
+  }
+  return segs;
+}
+
+// What a column of height z looks like from above: the whole stack composited
+// bottom-up, not just the top band against black. That is what lets a thin top
+// band read as a real blend (thin red over solid blue = purple) rather than as
+// a dark version of itself. Beer-Lambert against each filament's MEASURED hide
+// distance, so opacity tracks thickness in mm.
+function colourOf(z, segs, black){
+  let r = black[0], g = black[1], b = black[2];
+  for (const s of segs){
+    const n = Math.min(s.n, z - s.start);
+    if (n <= 0) continue;
+    const a = 1 - Math.exp(-4.6 * (n * G.layerH) / Math.max(0.01, s.td));
+    r = s.rgb[0]*a + r*(1-a);
+    g = s.rgb[1]*a + g*(1-a);
+    b = s.rgb[2]*a + b*(1-a);
+  }
+  return [r, g, b];
+}
+
+// Islands too small to print, handled on the LAYER CROSS-SECTIONS rather than
+// on the label map, because the cross-section is what the slicer actually has
+// to visit. Measured on a test export: islands under 9 dots are 74% of
+// everything the nozzle flies to and 1.1% of the printed area — by far the
+// cheapest printability-for-fidelity trade in the app.
+//
+//   grow   — dilate the island so it is wide enough to survive a nozzle, which
+//            only ever RAISES a column. Every feature stays, just bolder.
+//   remove — drop it to the layer below, which only ever lowers one. Cheaper
+//            and roughly twice as effective, but the feature is gone.
+//
+// Each mode is monotone, so it cannot oscillate. Worked top down, so a feature
+// several layers tall is dealt with at every layer it appears in. The base is
+// never touched: it is structural, and at that level the cross-section is the
+// whole plate anyway.
+// Dots covered by a Euclidean disc of this radius. A square 3x3 takes a lone dot
+// straight from 0.4 mm to 1.2 mm with nothing in between; a disc gives a finer
+// ladder — 5, 9, 13, 21, 29 dots at radius 1.0 through 3.0.
+function discOffsets(rad){
+  const off = [], k = Math.floor(rad);
+  for (let dy = -k; dy <= k; dy++)
+    for (let dx = -k; dx <= k; dx++)
+      if (dx*dx + dy*dy <= rad*rad + 1e-9) off.push(dx, dy);
+  return off;
+}
+const discSize = rad => discOffsets(rad).length / 2;
+
+// Islands too small to print, handled on the LAYER CROSS-SECTIONS rather than on
+// the label map, because the cross-section is what the slicer actually has to
+// visit. Measured on a test export: islands under 9 dots are 74% of everything
+// the nozzle flies to and 1.1% of the printed area — by far the cheapest
+// printability-for-fidelity trade in the app.
+//
+//   grow   — add exactly one disc of `growRad` around the island, which only
+//            ever RAISES a column. Every feature stays, slightly bolder. The
+//            amount is bounded on purpose, so an island may still end up under
+//            the threshold; the caller reports how many.
+//   remove — drop the island to the layer below, which only ever lowers one.
+//            Cheaper and about twice as effective, but the feature is gone.
+//
+// Both directions are monotone, so neither can oscillate. Worked top down, so a
+// feature several layers tall is dealt with at every layer it appears in. The
+// base is never touched: it is structural, and down there the cross-section is
+// the whole plate anyway.
+//
+// Returns how many islands are still under the threshold afterwards.
+function minIsland(heights, w, h, minDots, grow, base, growRad){
+  if (!(minDots >= 2)) return 0;
+  const n = w * h;
+  let topL = 0;
+  for (let p = 0; p < n; p++) if (heights[p] > topL) topL = heights[p];
+  const comp = new Int32Array(n), stack = new Int32Array(n), small = new Uint8Array(n);
+
+  function label(L){
+    comp.fill(-1);
+    const size = [];
+    let cid = 0;
+    for (let s0 = 0; s0 < n; s0++){
+      if (comp[s0] !== -1 || heights[s0] < L) continue;
+      let sp = 0, area = 0;
+      stack[sp++] = s0; comp[s0] = cid;
+      while (sp){
+        const q = stack[--sp]; area++;
+        const x = q % w, y = (q - x) / w;
+        if (x > 0   && comp[q-1] === -1 && heights[q-1] >= L){ comp[q-1] = cid; stack[sp++] = q-1; }
+        if (x < w-1 && comp[q+1] === -1 && heights[q+1] >= L){ comp[q+1] = cid; stack[sp++] = q+1; }
+        if (y > 0   && comp[q-w] === -1 && heights[q-w] >= L){ comp[q-w] = cid; stack[sp++] = q-w; }
+        if (y < h-1 && comp[q+w] === -1 && heights[q+w] >= L){ comp[q+w] = cid; stack[sp++] = q+w; }
+      }
+      size.push(area); cid++;
+    }
+    return size;
+  }
+
+  const off = grow ? discOffsets(growRad) : null;
+  for (let L = topL; L > base; L--){
+    const size = label(L);
+    if (!size.length) continue;
+    let any = false;
+    small.fill(0);
+    for (let p = 0; p < n; p++)
+      if (comp[p] >= 0 && size[comp[p]] < minDots){ small[p] = 1; any = true; }
+    if (!any) continue;
+
+    if (!grow){
+      // A whole component goes at once, so no other component can be split by
+      // it — one pass per layer is exact.
+      for (let p = 0; p < n; p++) if (small[p]) heights[p] = L - 1;
+      continue;
+    }
+    // Marked first, then applied, so a dot raised here cannot feed the same pass
+    // and run away. Exactly one pass: the amount added is the control, not a
+    // target to iterate towards.
+    for (let y = 0; y < h; y++){
+      for (let x = 0; x < w; x++){
+        if (!small[y*w + x]) continue;
+        for (let o = 0; o < off.length; o += 2){
+          const xx = x + off[o], yy = y + off[o+1];
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const q = yy*w + xx;
+          if (heights[q] < L) heights[q] = L;
+        }
+      }
+    }
+  }
+
+  let under = 0;
+  for (let L = topL; L > base; L--)
+    for (const a of label(L)) if (a < minDots) under++;
+  return under;
+}
+
+/* ----------------------------------------------------------------- draw --- */
+
+let lastSig = "", imgGen = 0;
+function render(){
+  const sig = readControls() + "|" + imgGen;     // labels and clamps even with no image
+  if (!img) return;
+  if (sig === lastSig) return;
+  lastSig = sig;
+  const {bands, active, total} = computeBands();
+  bandInfo = {bands, active, total};
+
+  // Sampling grid comes from physical dot size, not an abstract "resolution".
+  let w = Math.round(G.widthMm / G.dotMm);
+  if (w > MAX_DOTS) w = MAX_DOTS;
+  w = Math.max(2, w);
+  const h = Math.max(2, Math.round(img.height / img.width * w));
+
+  const dnR = denoiseR();
+  ensureFiltered(dnR);
+  const source = filt ? filt.canvas : work.canvas;
+
+  const off = document.createElement("canvas");
+  off.width = w; off.height = h;
+  const octx = off.getContext("2d", {willReadFrequently:true});
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = "high";
+  octx.drawImage(source, 0, 0, w, h);
+  const px4 = octx.getImageData(0, 0, w, h).data;
+
+  // Source panel shows the image AS FILTERED but not as sampled — the denoise is
+  // something you need to see, the dot grid is a print constraint rather than
+  // something to look at your input through.
+  const cS = $("cSrc"), cH = $("cHgt"), cM = $("cSim");
+  const dw = Math.min(work.w, 1600), dh = Math.round(work.h / work.w * dw);
+  cS.width = dw; cS.height = dh;
+  const sctx = cS.getContext("2d");
+  sctx.imageSmoothingEnabled = true; sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(source, 0, 0, dw, dh);
+  for (const c of [cH, cM]){ c.width = w; c.height = h; }
+
+  const hgt = new ImageData(w, h), sim = new ImageData(w, h);
+  const heights = new Int32Array(w * h);
+  const black = hex2rgb(G.blackCol);
+  const denom = Math.max(1, total);
+  const dotMm = G.widthMm / w;
+
+  // Hole mask. Punched purely as material removal, after the colour logic has
+  // run, so it never competes with a channel for a sample.
+  let hole = null, holeCells = 0;
+  if (G.holeOn && G.holeDia > 0){
+    const hx = G.holeX / 100 * w, hy = G.holeY / 100 * h;
+    const r = G.holeDia / 2 / dotMm, r2 = r * r;
+    hole = new Uint8Array(w * h);
+    for (let j = 0; j < h; j++){
+      for (let i = 0; i < w; i++){
+        const dx = i + 0.5 - hx, dy = j + 0.5 - hy;
+        if (dx*dx + dy*dy <= r2){ hole[j*w + i] = 1; holeCells++; }
+      }
+    }
+  }
+
+  // pass 1 — which channel wins each sample (BG = background)
+  const BG = active.length;
+  let lab = new Int32Array(w * h);
+  for (let i = 0, px = 0; i < px4.length; i += 4, px++){
+    const p = pick(px4[i], px4[i+1], px4[i+2], active);
+    lab[px] = p ? active.indexOf(p.k) : BG;
+  }
+
+  // pass 2 — delete only the islands too narrow to print
+  const featR = Math.round(G.minFeat / dotMm / 2);
+  let changed = 0;
+  if (G.minFeat > 0 && featR >= 1 && active.length){
+    const cleaned = dropTinyIslands(lab, w, h, BG + 1, featR);
+    for (let p = 0; p < lab.length; p++) if (cleaned[p] !== lab[p]) changed++;
+    lab = cleaned;
+  }
+
+  // pass 3 — heights from the cleaned-up labels. Colour is NOT computed here:
+  // everything downstream (the island rule, the hole) edits geometry, and
+  // deriving the preview from the final height is what keeps the panel and the
+  // mesh from disagreeing the way they used to.
+  for (let i = 0, px = 0; i < px4.length; i += 4, px++){
+    const L = lab[px];
+    let z = G.base;
+    if (L !== BG){
+      const k = active[L], c = byKey(k);
+      const v = [px4[i], px4[i+1], px4[i+2]][c.idx];
+      const t = Math.max(0, Math.min(1, (v - c.thr) / Math.max(1, 255 - c.thr)));
+      const n = c.grad
+        ? Math.max(c.min, Math.min(c.max, Math.round(c.min + t * (c.max - c.min))))
+        : c.max;
+      z = bands[k].start + n;
+    }
+    heights[px] = z;
+  }
+
+  // pass 4 — islands too small to print
+  const wasH = G.minIsland >= 2 ? Int32Array.from(heights) : null;
+  const islUnder = minIsland(heights, w, h, G.minIsland,
+                             G.islandMode === "grow", G.base, G.growBy);
+  let islChanged = 0;
+  if (wasH) for (let p = 0; p < heights.length; p++) if (wasH[p] !== heights[p]) islChanged++;
+
+  // pass 5 — the hole, last, so nothing grows back into it
+  if (hole) for (let p = 0; p < heights.length; p++) if (hole[p]) heights[p] = 0;
+
+  // pass 6 — height map and simulated colour, both read off the final geometry
+  const segs = stackSegments(bands, active);
+  for (let px = 0; px < heights.length; px++){
+    const z = heights[px], i = px * 4;
+    let sr, sg, sb;
+    if (z <= 0){                      // a void, drawn as neither filament nor black
+      sr = 44; sg = 49; sb = 59;
+    } else {
+      const c = colourOf(z, segs, black);
+      sr = c[0]; sg = c[1]; sb = c[2];
+    }
+    const v = Math.round(z / denom * 255);
+    hgt.data[i] = hgt.data[i+1] = hgt.data[i+2] = v; hgt.data[i+3] = 255;
+    sim.data[i] = sr; sim.data[i+1] = sg; sim.data[i+2] = sb; sim.data[i+3] = 255;
+  }
+
+  // worst step between neighbouring samples — the printability number. Hole
+  // edges are skipped: that wall is deliberate and is no different from the
+  // plaque's own outer edge.
+  let worst = 0;
+  for (let j = 0; j < h; j++){
+    for (let i = 0; i < w; i++){
+      const p = j*w + i, z = heights[p];
+      if (z <= 0) continue;
+      if (i + 1 < w && heights[p+1] > 0) worst = Math.max(worst, Math.abs(z - heights[p+1]));
+      if (j + 1 < h && heights[p+w] > 0) worst = Math.max(worst, Math.abs(z - heights[p+w]));
+    }
+  }
+
+  cH.getContext("2d").putImageData(hgt, 0, 0);
+  cM.getContext("2d").putImageData(sim, 0, 0);
+
+  grid = {w, h, heights};
+
+  const cs = dotMm, tris = triCount(w, h, heights);
+  const mb = (84 + tris * 50) / 1048576;
+  const flags = [];
+  if (Math.round(G.widthMm / G.dotMm) > MAX_DOTS) flags.push(`capped at ${MAX_DOTS} dots across`);
+  if (G.widthMm > BED || cs * h > BED) flags.push(`larger than the ${BED} mm bed`);
+  if (mb > 20) flags.push("large file — slicers may struggle");
+  $("sizenote").textContent =
+    `${w}x${h} dots · ${cs.toFixed(2)} mm each · plaque ${G.widthMm.toFixed(0)}x${(cs*h).toFixed(0)} mm`
+    + ` · ${tris.toLocaleString()} triangles · ${mb.toFixed(1)} MB`
+    + `\nprint ${zOf(total).toFixed(2)} mm tall · worst step between neighbours `
+    + `${worst} layers (${(worst*G.layerH).toFixed(2)} mm) over ${cs.toFixed(2)} mm`
+    + (featR >= 1 ? ` · islands under ${((2*featR+1)*cs).toFixed(2)} mm wide removed,`
+                    + ` ${(changed / (w*h) * 100).toFixed(1)}% of samples altered` : "")
+    + (holeCells ? `\nhole ${G.holeDia.toFixed(1)} mm at `
+                   + `${(G.holeX/100*G.widthMm).toFixed(1)}, ${(G.holeY/100*cs*h).toFixed(1)} mm`
+                   + ` — ${holeCells.toLocaleString()} dots removed` : "")
+    + (flags.length ? "  ⚠ " + flags.join("; ") : "");
+
+  const dnPx = 2*dnR + 1, dnMm = work ? dnPx * (G.widthMm / work.w) : 0;
+  $("mednote").textContent = G.denoiseMm <= 0
+    ? "Denoise = median filter on the source, before the dots are sampled and "
+      + "before any channel decides a pixel. Off."
+    : dnR < 1
+      ? `No effect: ${G.denoiseMm.toFixed(2)} mm is finer than one source pixel `
+        + `(${(G.widthMm / work.w).toFixed(3)} mm at this plaque size). Raise it, `
+        + "or use a higher-resolution image."
+      : `Median ${dnPx}x${dnPx} source pixels = ${dnMm.toFixed(2)} mm across, `
+        + `${(dnMm / dotMm).toFixed(1)} dots wide. Removes isolated specks without `
+        + "softening real edges. On a detailed image the fragmentation is mostly "
+        + "REAL structure rather than noise, so this trades picture for "
+        + "printability at every setting — the low end is where that trade is cheap.";
+  const mi = G.minIsland;
+  $("islnote").textContent = mi < 2
+    ? "Min island = the smallest patch of a layer allowed to print, in dots. Off. "
+      + "On a detailed image most of what the nozzle flies to is tiny: islands "
+      + "under 9 dots were 74% of the travel and 1.1% of the printed area."
+    : `Islands under ${mi} dots (${(mi*dotMm*dotMm).toFixed(2)} mm2) are `
+      + (G.islandMode === "grow"
+          ? `grown by a disc of ${G.growBy.toFixed(1)} dots — a lone dot becomes `
+            + `${discSize(G.growBy)} dots, ${(Math.sqrt(discSize(G.growBy))*dotMm).toFixed(2)} mm `
+            + "across. One pass only, so the amount added is bounded and "
+            + `${islUnder.toLocaleString()} island${islUnder === 1 ? " is" : "s are"} `
+            + "still under the threshold. Only material is added, never removed. "
+          : "dropped to the layer below, so the colour underneath shows through. "
+            + "Cheaper and about twice as effective as growing, but the feature is gone. ")
+      + `${(islChanged / (w*h) * 100).toFixed(1)}% of dots changed.`;
+  updateChannelNotes();
+  $("plan").textContent = swapPlan();
+  for (const b of ["btn3mf","btnStl","btnPlan","btnPng"]) $(b).disabled = false;
+}
+
+/* ------------------------------------------------------------ swap plan --- */
+
+function swapPlan(){
+  const {bands, active, total} = bandInfo;
+  const L = [];
+  L.push(`chromastack — ${stem()}`);
+  L.push("");
+  L.push(`Slicer: layer height ${G.layerH} mm, first layer ${G.firstLayer} mm.`);
+  L.push("These layer numbers are only right if both match.");
+  L.push("");
+  L.push("Load BLACK to start.");
+
+  const pauses = [];
+  active.forEach((k, i) => {
+    const b = bands[k];
+    if (i > 0 && G.inter > 0) pauses.push([b.start - G.inter + 1, "BLACK  (interlayer)"]);
+    pauses.push([b.start + 1, byKey(k).name.toUpperCase()]);
+  });
+  const wd = Math.max(2, ...pauses.map(p => String(p[0]).length));
+  for (const [ly, name] of pauses)
+    L.push(`  Pause at layer ${String(ly).padStart(wd)}  ->  load ${name}`);
+
+  L.push("");
+  L.push(`${total} layers, ${zOf(total).toFixed(2)} mm tall, ${pauses.length} pauses.`);
+  L.push("Purge at each pause until the new colour runs clean.");
+
+  L.push("");
+  L.push("----- Flash Studio -----");
+  const fs_ = [
+    ["Layer height",          `${G.layerH} mm`,      "must match the numbers above"],
+    ["First layer height",    `${G.firstLayer} mm`,  "must match the numbers above"],
+    ["Wall generator",        "Arachne",   "classic can't narrow a bead to fit a small island"],
+    ["Wall loops",            "1",         "two perimeters need ~0.84 mm of width to fit"],
+    ["Detect thin walls",     "ON",        "off = anything under one bead prints as nothing"],
+    ["Filter out gap fill",   "0",         "default 0.5 mm discards most of this model's detail"],
+    ["Sparse infill density", "100%",      "top surfaces sag over sparse infill"],
+  ];
+  const kw = Math.max(...fs_.map(r => r[0].length));
+  const vw = Math.max(...fs_.map(r => r[1].length));
+  for (const [k, v, why] of fs_)
+    L.push(`${k.padEnd(kw)}  ${v.padEnd(vw)}  ${why}`);
+
+  L.push("");
+  L.push("----- settings used -----");
+  const cellMm = G.widthMm / grid.w;
+  L.push(`plaque ${G.widthMm.toFixed(1)} x ${(cellMm*grid.h).toFixed(1)} mm, `
+       + `${grid.w}x${grid.h} dots at ${cellMm.toFixed(2)} mm`);
+  L.push(`base ${G.base} layers${G.inter ? `, interlayer ${G.inter} layers` : ""}`
+       + `, collision ${G.collision === "brightest" ? "brightest wins" : "priority"}`
+       + `, bed ${G.bedType}`);
+  if (G.holeOn && G.holeDia > 0)
+    L.push(`hole ${G.holeDia.toFixed(1)} mm at ${(G.holeX/100*G.widthMm).toFixed(1)}, `
+         + `${(G.holeY/100*cellMm*grid.h).toFixed(1)} mm from the top-left`);
+  active.forEach(k => {
+    const c = byKey(k), b = bands[k];
+    L.push(`${c.name.padEnd(6)} layers ${b.start + 1}-${b.start + c.max}`
+         + `, threshold ${c.thr}, colour ${c.col}`
+         + (c.grad ? `, gradient ${c.min}-${c.max} layers, hide distance ${c.td.toFixed(2)} mm`
+                   : `, flat`));
+  });
+  return L.join("\n");
+}
+
+/* ------------------------------------------------------------------ STL --- */
+
+// STEPPED height field: every sample is a flat-topped cell at exactly its own
+// height, joined to its neighbours by vertical walls. The exported surface is
+// then the label map, dot for dot — what the simulation shows is what gets
+// sliced.
+//
+// The obvious alternative, putting vertices at cell corners and ramping between
+// them, cannot do that. A corner has to pick ONE height for four cells, and any
+// choice distorts: MAX dilates the taller band over the shorter one by a cell in
+// every direction, MIN does the reverse, averaging smears both. Because height
+// encodes WHICH CHANNEL a sample belongs to, that is not a cosmetic smoothing —
+// it is a morphological operator ranked by stack order, and it silently deleted
+// most of the bottom channel (blue: 34% of the plate in the preview, 14% in the
+// exported mesh). Steps are honest; ramps quietly rewrite the picture.
+//
+// Cells outside the grid count as height 0, so the outer skirt falls out of the
+// same code as the internal walls and the mesh closes against a flat bottom.
+//
+// The one subtlety is T-junctions. Where four cells meet, up to four walls share
+// one vertical line, and each needs the SAME vertices along it or the mesh has
+// hairline cracks. So a wall is not a bare rectangle: each of its two vertical
+// edges is split at the heights of the four cells standing around that corner,
+// and the two edges are then zipped into a triangle strip.
+// Triangles are handed to `tri` as LATTICE points [i, j, layer] — integer grid
+// column and integer layer count, not millimetres. Every vertex this mesh has
+// lands on that lattice (wall splits are cell heights, the bottom is layer 0),
+// which lets the 3MF writer index vertices by a single integer instead of
+// hashing coordinate strings. buildSTL converts to mm on the way out.
+function walkMesh(w, h, heights, tri){
+  if (w < 1 || h < 1) return 0;
+  let count = 0;
+  const H = (i, j) => (i < 0 || j < 0 || i >= w || j >= h) ? 0 : heights[j*w + i];
+
+  // Levels on the vertical edge standing at grid corner (ci,cj), clipped to the
+  // open interval (lo,hi). Only the four surrounding cells can contribute, and
+  // every wall meeting this corner derives its splits from the same four — that
+  // is what makes the subdivisions agree.
+  const c4 = [0,0,0,0];
+  const levels = (ci, cj, lo, hi, out) => {
+    c4[0] = H(ci-1,cj-1); c4[1] = H(ci,cj-1); c4[2] = H(ci-1,cj); c4[3] = H(ci,cj);
+    c4.sort((a,b) => a-b);
+    out.length = 0; out.push(lo);
+    for (let k = 0; k < 4; k++)
+      if (c4[k] > lo && c4[k] < hi && c4[k] !== out[out.length-1]) out.push(c4[k]);
+    out.push(hi);
+    return out;
+  };
+
+  // Zip two bottom-to-top edge chains into a strip. Every triangle takes two
+  // points from one chain and one from the other, so none can be degenerate.
+  const LA = [], LB = [];
+  const wall = (ptA, ptB, la, lb) => {
+    let a = 0, b = 0;
+    while (a < la.length - 1 || b < lb.length - 1){
+      const upA = a < la.length - 1 && (b >= lb.length - 1 || la[a+1] <= lb[b+1]);
+      if (upA){ if (tri) tri(ptA(la[a]), ptB(lb[b]), ptA(la[a+1])); a++; }
+      else    { if (tri) tri(ptA(la[a]), ptB(lb[b]), ptB(lb[b+1])); b++; }
+      count++;
+    }
+  };
+
+  // top surface — one flat quad per cell, at that cell's own height. A cell
+  // punched out by a hole carries height 0, the same value the world outside the
+  // grid has, so it gets no top and no bottom and the wall code closes the mesh
+  // around it exactly the way it closes the outer edge.
+  let solid = 0;
+  for (let j = 0; j < h; j++){
+    for (let i = 0; i < w; i++){
+      const z = heights[j*w + i];
+      if (z <= 0) continue;
+      solid++; count += 2;
+      if (!tri) continue;
+      tri([i,j,z], [i+1,j,z], [i+1,j+1,z]);
+      tri([i,j,z], [i+1,j+1,z], [i,j+1,z]);
+    }
+  }
+
+  // walls perpendicular to X, at column i, between cells (i-1,j) and (i,j).
+  // Chain A sits at the lower j for a +X face and the higher j for a -X face;
+  // that ordering is what points the normal away from the taller cell.
+  for (let j = 0; j < h; j++){
+    for (let i = 0; i <= w; i++){
+      const zl = H(i-1, j), zr = H(i, j);
+      if (zl === zr) continue;
+      const lo = Math.min(zl, zr), hi = Math.max(zl, zr);
+      const ja = zl > zr ? j : j+1, jb = zl > zr ? j+1 : j;
+      wall(z => [i, ja, z], z => [i, jb, z],
+           levels(i, ja, lo, hi, LA), levels(i, jb, lo, hi, LB));
+    }
+  }
+
+  // walls perpendicular to Y, at row j, between cells (i,j-1) and (i,j)
+  for (let j = 0; j <= h; j++){
+    for (let i = 0; i < w; i++){
+      const zd = H(i, j-1), zu = H(i, j);
+      if (zd === zu) continue;
+      const lo = Math.min(zd, zu), hi = Math.max(zd, zu);
+      const ia = zd > zu ? i+1 : i, ib = zd > zu ? i : i+1;
+      wall(z => [ia, j, z], z => [ib, j, z],
+           levels(ia, j, lo, hi, LA), levels(ib, j, lo, hi, LB));
+    }
+  }
+
+  // flat bottom, normal -Z. With no hole the bottom is the whole rectangle, so a
+  // fan over the perimeter closes it in 2(w+h) triangles instead of 2wh; the
+  // apex is a grid corner rather than the geometric centre so it stays on the
+  // lattice, and any strictly interior point triangulates a rectangle without
+  // degenerate triangles. A hole makes the bottom multiply-connected and the fan
+  // no longer valid, so fall back to one quad per solid cell — which costs the
+  // extra triangles but handles a hole of any shape, anywhere, including one
+  // that runs off the edge.
+  if (solid === w * h){
+    const ring = [];
+    for (let i = 0; i < w; i++) ring.push([i, 0]);
+    for (let j = 0; j < h; j++) ring.push([w, j]);
+    for (let i = w; i > 0; i--) ring.push([i, h]);
+    for (let j = h; j > 0; j--) ring.push([0, j]);
+    const ax = w >> 1, ay = h >> 1;
+    for (let k = 0; k < ring.length; k++){
+      count++;
+      if (!tri) continue;
+      const [ai, aj] = ring[k], [bi, bj] = ring[(k+1) % ring.length];
+      tri([ax, ay, 0], [bi, bj, 0], [ai, aj, 0]);
+    }
+  } else {
+    for (let j = 0; j < h; j++){
+      for (let i = 0; i < w; i++){
+        if (heights[j*w + i] <= 0) continue;
+        count += 2;
+        if (!tri) continue;
+        tri([i,j,0], [i+1,j+1,0], [i+1,j,0]);
+        tri([i,j,0], [i,j+1,0], [i+1,j+1,0]);
+      }
+    }
+  }
+  return count;
+}
+
+// The sampling grid runs top-down, the way an image does; the bed runs bottom-up.
+// Leaving that mismatch in place does not just stand the picture on its head, it
+// MIRRORS it — flipping a single axis reverses handedness — which is invisible in
+// the preview and only shows up once the plaque is printed and turned upright.
+// Mapping row j to h - j puts the top of the picture at the back of the bed, and
+// reversing each triangle's winding undoes the inversion the reflection would
+// otherwise cause, so normals still point out.
+const flipRows = (h, tri) => (a, b, c) => tri(
+  [a[0], h - a[1], a[2]], [c[0], h - c[1], c[2]], [b[0], h - b[1], b[2]]);
+
+// Cheap enough to call on every slider move — one counting pass, no geometry.
+const triCount = (w, h, heights) => heights ? walkMesh(w, h, heights, null) : 0;
+
+function buildSTL(){
+  const {w, h, heights} = grid;
+  if (w < 1 || h < 1) throw new Error("sampling grid too small to mesh");
+
+  const n = walkMesh(w, h, heights, null);
+  if (!n) throw new Error("nothing left to mesh — the hole covers the whole plaque");
+  const buf = new ArrayBuffer(84 + n * 50);
+  const dv = new DataView(buf);
+  dv.setUint32(80, n, true);
+  let o = 84;
+
+  const cs = G.widthMm / w;
+  const P = p => [p[0] * cs, p[1] * cs, zOf(p[2])];
+  walkMesh(w, h, heights, flipRows(h, (la, lb, lc) => {
+    const a = P(la), b = P(lb), c = P(lc);
+    const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+    const vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+    const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    const m = Math.hypot(nx, ny, nz) || 1;
+    dv.setFloat32(o, nx/m, true); dv.setFloat32(o+4, ny/m, true); dv.setFloat32(o+8, nz/m, true);
+    o += 12;
+    for (const p of [a,b,c]){
+      dv.setFloat32(o, p[0], true); dv.setFloat32(o+4, p[1], true); dv.setFloat32(o+8, p[2], true);
+      o += 12;
+    }
+    dv.setUint16(o, 0, true); o += 2;
+  }));
+  return buf;
+}
+
+/* ------------------------------------------------------------------ 3MF --- */
+
+// Everything that actually changes with nozzle size, lifted from the installed
+// AD5M machine profiles and their matching "Standard" process profiles. Only 11
+// machine keys vary at all — retraction, z-hop, the layer-height limits, the
+// preset name — so this is an overlay rather than four embedded profiles. The
+// line widths come from the process side and matter just as much: leaving
+// 0.42 mm lines on a 0.6 nozzle under-extrudes every road on the plate.
+const NOZZLES = {"0.25":{"filament":{"activate_air_filtration":["1"],"additional_cooling_fan_speed":["100"],"close_fan_the_first_x_layers":["1"],"complete_print_exhaust_fan_speed":["100"],"cool_plate_temp":["60"],"cool_plate_temp_initial_layer":["55"],"during_print_exhaust_fan_speed":["100"],"eng_plate_temp":["60"],"eng_plate_temp_initial_layer":["55"],"fan_cooling_layer_time":["100"],"fan_max_speed":["100"],"fan_min_speed":["100"],"filament_cost":["20"],"filament_density":["1.24"],"filament_deretraction_speed":["nil"],"filament_diameter":["1.75"],"filament_end_gcode":["; filament end gcode\n"],"filament_flow_ratio":["1"],"filament_ids":["GFL99"],"filament_max_volumetric_speed":["2.8"],"filament_minimal_purge_on_wipe_tower":["15"],"filament_retract_before_wipe":["nil"],"filament_retract_restart_extra":["nil"],"filament_retract_when_changing_layer":["nil"],"filament_retraction_length":["nil"],"filament_retraction_minimum_travel":["nil"],"filament_retraction_speed":["nil"],"filament_settings_id":["Flashforge PLA @FF AD5M 0.25 Nozzle"],"filament_soluble":["0"],"filament_start_gcode":["; filament start gcode\n;right_extruder_material: PLA\n"],"filament_type":["PLA"],"filament_vendor":["Flashforge"],"filament_wipe":["nil"],"filament_wipe_distance":["nil"],"filament_z_hop":["nil"],"filament_z_hop_types":["nil"],"full_fan_speed_layer":["0"],"hot_plate_temp":["45"],"hot_plate_temp_initial_layer":["50"],"nozzle_temperature":["220"],"nozzle_temperature_initial_layer":["220"],"nozzle_temperature_range_high":["230"],"nozzle_temperature_range_low":["190"],"overhang_fan_speed":["100"],"overhang_fan_threshold":["25%"],"reduce_fan_stop_start_freq":["1"],"slow_down_for_layer_cooling":["1"],"slow_down_layer_time":["8"],"slow_down_min_speed":["15"],"temperature_vitrification":["60"],"textured_plate_temp":["60"],"textured_plate_temp_initial_layer":["55"],"version":"1.8.0.0"},"machine":{"default_filament_profile":["Flashforge Generic PLA"],"default_print_profile":"0.12mm Standard @Flashforge AD5M 0.25 Nozzle","deretraction_speed":["35"],"initial_layer_line_width":"0.3","initial_layer_print_height":"0.15","inner_wall_line_width":"0.3","internal_solid_infill_line_width":"0.3","layer_height":"0.12","line_width":"0.25","machine_start_gcode":"M190 S[bed_temperature_initial_layer_single]\nM104 S[nozzle_temperature_initial_layer]\nG1 Z5 F6000\nG90 E0\nM83\nG1 E-1 F600\nG1 E8 F300\nG1 X85 Y110 Z0.2 F1200\nG1 X-110 E15 F2400\nG1 Y0 E4 F2400\nG1 X-109.6 F2400\nG1 Y110 E5 F2400\nG92 E0","max_layer_height":["0.14"],"min_layer_height":["0.08"],"nozzle_diameter":["0.25"],"nozzle_type":"stainless_steel","outer_wall_line_width":"0.25","printer_settings_id":"Flashforge","printer_variant":"0.25","retraction_length":["1"],"retraction_speed":["35"],"sparse_infill_line_width":"0.3","support_line_width":"0.25","top_surface_line_width":"0.3","z_hop":["0.3"]}},"0.4":{"filament":{"additional_cooling_fan_speed":["100"],"close_fan_the_first_x_layers":["1"],"cool_plate_temp":["60"],"cool_plate_temp_initial_layer":["55"],"eng_plate_temp":["60"],"eng_plate_temp_initial_layer":["55"],"fan_cooling_layer_time":["100"],"fan_max_speed":["100"],"fan_min_speed":["100"],"filament_cost":["20"],"filament_density":["1.24"],"filament_deretraction_speed":["nil"],"filament_diameter":["1.75"],"filament_end_gcode":["; filament end gcode\n"],"filament_flow_ratio":["0.98"],"filament_ids":["GFL99"],"filament_max_volumetric_speed":["25"],"filament_minimal_purge_on_wipe_tower":["15"],"filament_retract_before_wipe":["nil"],"filament_retract_restart_extra":["nil"],"filament_retract_when_changing_layer":["nil"],"filament_retraction_length":["nil"],"filament_retraction_minimum_travel":["nil"],"filament_retraction_speed":["nil"],"filament_settings_id":["Flashforge Generic PLA"],"filament_soluble":["0"],"filament_start_gcode":["; filament start gcode\n;right_extruder_material: PLA\n"],"filament_type":["PLA"],"filament_vendor":["Flashforge"],"filament_wipe":["nil"],"filament_wipe_distance":["nil"],"filament_z_hop":["nil"],"filament_z_hop_types":["nil"],"full_fan_speed_layer":["0"],"hot_plate_temp":["50"],"hot_plate_temp_initial_layer":["55"],"nozzle_temperature":["220"],"nozzle_temperature_initial_layer":["220"],"nozzle_temperature_range_high":["230"],"nozzle_temperature_range_low":["190"],"overhang_fan_speed":["100"],"overhang_fan_threshold":["50%"],"reduce_fan_stop_start_freq":["1"],"slow_down_for_layer_cooling":["1"],"slow_down_layer_time":["6"],"slow_down_min_speed":["20"],"temperature_vitrification":["60"],"textured_plate_temp":["60"],"textured_plate_temp_initial_layer":["55"]},"machine":{"default_filament_profile":["Flashforge Generic PLA"],"default_print_profile":"0.20mm Standard @Flashforge AD5M 0.4 Nozzle","deretraction_speed":["30"],"initial_layer_line_width":"0.50","initial_layer_print_height":"0.2","inner_wall_line_width":"0.45","internal_solid_infill_line_width":"0.42","layer_height":"0.2","line_width":"0.42","machine_start_gcode":"M190 S[bed_temperature_initial_layer_single]\nM104 S[nozzle_temperature_initial_layer]\nG90\nM83\nG1 Z5 F6000\nG1 E-0.2 F800\nG1 X110 Y-110 F6000\nG1 E2 F800\nG1 Y-110 X55 Z0.25 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG1 Y-110 X55 Z0.45 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG92 E0","max_layer_height":["0.28"],"min_layer_height":["0.08"],"nozzle_diameter":["0.4"],"nozzle_type":"stainless_steel","outer_wall_line_width":"0.42","printer_settings_id":"Flashforge Adventurer 5M 0.4 Nozzle - update","printer_variant":"0.4","retraction_length":["0.8"],"retraction_speed":["30"],"sparse_infill_line_width":"0.45","support_line_width":"0.42","top_surface_line_width":"0.42","z_hop":["0.4"]}},"0.6":{"filament":{"additional_cooling_fan_speed":["100"],"close_fan_the_first_x_layers":["1"],"cool_plate_temp":["60"],"cool_plate_temp_initial_layer":["55"],"eng_plate_temp":["60"],"eng_plate_temp_initial_layer":["55"],"fan_cooling_layer_time":["100"],"fan_max_speed":["100"],"fan_min_speed":["100"],"filament_cost":["20"],"filament_density":["1.24"],"filament_deretraction_speed":["nil"],"filament_diameter":["1.75"],"filament_end_gcode":["; filament end gcode\n"],"filament_flow_ratio":["0.98"],"filament_ids":["GFL99"],"filament_max_volumetric_speed":["25"],"filament_minimal_purge_on_wipe_tower":["15"],"filament_retract_before_wipe":["nil"],"filament_retract_restart_extra":["nil"],"filament_retract_when_changing_layer":["nil"],"filament_retraction_length":["nil"],"filament_retraction_minimum_travel":["nil"],"filament_retraction_speed":["nil"],"filament_settings_id":["Flashforge Generic PLA"],"filament_soluble":["0"],"filament_start_gcode":["; filament start gcode\n;right_extruder_material: PLA\n"],"filament_type":["PLA"],"filament_vendor":["Flashforge"],"filament_wipe":["nil"],"filament_wipe_distance":["nil"],"filament_z_hop":["nil"],"filament_z_hop_types":["nil"],"full_fan_speed_layer":["0"],"hot_plate_temp":["50"],"hot_plate_temp_initial_layer":["55"],"nozzle_temperature":["220"],"nozzle_temperature_initial_layer":["220"],"nozzle_temperature_range_high":["230"],"nozzle_temperature_range_low":["190"],"overhang_fan_speed":["100"],"overhang_fan_threshold":["50%"],"reduce_fan_stop_start_freq":["1"],"slow_down_for_layer_cooling":["1"],"slow_down_layer_time":["6"],"slow_down_min_speed":["20"],"temperature_vitrification":["60"],"textured_plate_temp":["60"],"textured_plate_temp_initial_layer":["55"]},"machine":{"default_filament_profile":["Flashforge Generic PLA"],"default_print_profile":"0.30mm Standard @Flashforge AD5M 0.6 Nozzle","deretraction_speed":["35"],"initial_layer_line_width":"0.62","initial_layer_print_height":"0.3","inner_wall_line_width":"0.62","internal_solid_infill_line_width":"0.62","layer_height":"0.3","line_width":"0.62","machine_start_gcode":"M190 S[bed_temperature_initial_layer_single]\nM104 S[nozzle_temperature_initial_layer]\nG90\nM83\nG1 Z5 F6000\nG1 E-0.2 F800\nG1 X110 Y-110 F6000\nG1 E2 F800\nG1 Y-110 X55 Z0.25 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG1 Y-110 X55 Z0.45 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG92 E0","max_layer_height":["0.42"],"min_layer_height":["0.15"],"nozzle_diameter":["0.6"],"nozzle_type":"hardened_steel","outer_wall_line_width":"0.62","printer_settings_id":"Flashforge Adventurer 5M 0.6 Nozzle - udpate","printer_variant":"0.6","retraction_length":["1.2"],"retraction_speed":["35"],"sparse_infill_line_width":"0.62","support_line_width":"0.62","top_surface_line_width":"0.62","z_hop":["0.4"]}},"0.8":{"filament":{"additional_cooling_fan_speed":["100"],"close_fan_the_first_x_layers":["1"],"cool_plate_temp":["60"],"cool_plate_temp_initial_layer":["55"],"eng_plate_temp":["60"],"eng_plate_temp_initial_layer":["55"],"fan_cooling_layer_time":["100"],"fan_max_speed":["100"],"fan_min_speed":["100"],"filament_cost":["20"],"filament_density":["1.24"],"filament_deretraction_speed":["nil"],"filament_diameter":["1.75"],"filament_end_gcode":["; filament end gcode\n"],"filament_flow_ratio":["0.98"],"filament_ids":["GFL99"],"filament_max_volumetric_speed":["25"],"filament_minimal_purge_on_wipe_tower":["15"],"filament_retract_before_wipe":["nil"],"filament_retract_restart_extra":["nil"],"filament_retract_when_changing_layer":["nil"],"filament_retraction_length":["nil"],"filament_retraction_minimum_travel":["nil"],"filament_retraction_speed":["nil"],"filament_settings_id":["Flashforge Generic PLA"],"filament_soluble":["0"],"filament_start_gcode":["; filament start gcode\n;right_extruder_material: PLA\n"],"filament_type":["PLA"],"filament_vendor":["Flashforge"],"filament_wipe":["nil"],"filament_wipe_distance":["nil"],"filament_z_hop":["nil"],"filament_z_hop_types":["nil"],"full_fan_speed_layer":["0"],"hot_plate_temp":["50"],"hot_plate_temp_initial_layer":["55"],"nozzle_temperature":["220"],"nozzle_temperature_initial_layer":["220"],"nozzle_temperature_range_high":["230"],"nozzle_temperature_range_low":["190"],"overhang_fan_speed":["100"],"overhang_fan_threshold":["50%"],"reduce_fan_stop_start_freq":["1"],"slow_down_for_layer_cooling":["1"],"slow_down_layer_time":["6"],"slow_down_min_speed":["20"],"temperature_vitrification":["60"],"textured_plate_temp":["60"],"textured_plate_temp_initial_layer":["55"]},"machine":{"default_filament_profile":["Flashforge Generic PLA"],"default_print_profile":"0.40mm Standard @Flashforge AD5M 0.8 Nozzle","deretraction_speed":["35"],"initial_layer_line_width":"0.85","initial_layer_print_height":"0.3","inner_wall_line_width":"0.85","internal_solid_infill_line_width":"0.82","layer_height":"0.4","line_width":"0.82","machine_start_gcode":"M190 S[bed_temperature_initial_layer_single]\nM104 S[nozzle_temperature_initial_layer]\nG1 Z5 F6000\nG1 E-1.5 F600\nG1 E12 F800\nG1 X85 Y110 Z0.3 F1200\nG1 X-110 E30 F2400\nG1 Y0 E8 F2400\nG1 X-109.6 F2400\nG1 Y110 E10 F2400\nG92 E0","max_layer_height":["0.56"],"min_layer_height":["0.24"],"nozzle_diameter":["0.8"],"nozzle_type":"hardened_steel","outer_wall_line_width":"0.82","printer_settings_id":"Flashforge Adventurer 5M 0.8 Nozzle - update","printer_variant":"0.8","retraction_length":["1.5"],"retraction_speed":["35"],"sparse_infill_line_width":"0.85","support_line_width":"0.82","top_surface_line_width":"0.82","z_hop":["0"]}}};
+
+// project_settings.config template. NOT hand-written: distilled from the AD5M
+// conversion on this machine that already opens and slices in Flash Studio,
+// with the installed "Flashforge Adventurer 5M 0.4 Nozzle" profile overlaid and
+// chromastrip's convert rules re-applied — prime tower off, SEMM off (an AMS
+// would auto-purge; a manual swap must not, and SEMM=1 makes the slicer reject
+// the zeroed flush), flush volumes zeroed, version stamped back to something
+// Flash Studio 2.3.2 accepts.
+//
+// Orca reads the per-filament arrays POSITIONALLY, and this palette is a
+// different size from the one the template came from, so every per-filament
+// array is stored here at length 1 and repeated to the real count on export.
+const AD5M = {"cfg":{"accel_to_decel_enable":"0","accel_to_decel_factor":"50%","activate_air_filtration":["0"],"adaptive_bed_mesh_margin":"0","additional_cooling_fan_speed":["70"],"additional_fan_full_speed_layer":["0"],"alternate_extra_wall":"0","apply_scarf_seam_on_circles":"1","auxiliary_fan":"1","avoid_crossing_wall_includes_support":"0","bbl_use_printhost":"0","bed_custom_model":"","bed_custom_texture":"","bed_exclude_area":["0x0"],"bed_mesh_max":"99999,99999","bed_mesh_min":"-99999,-99999","bed_mesh_probe_distance":"50,50","bed_temperature_formula":"by_first_filament","before_layer_change_gcode":";BEFORE_LAYER_CHANGE\n;[layer_z]","best_object_pos":"0.5,0.5","bottom_color_penetration_layers":"3","bottom_shell_layers":"3","bottom_shell_thickness":"0","bottom_surface_density":"100%","bottom_surface_pattern":"monotonic","bridge_angle":"0","bridge_flow":"1","bridge_no_support":"0","bridge_speed":["50"],"brim_object_gap":"0.1","brim_type":"auto_brim","brim_width":"5","chamber_temperatures":["0"],"change_extrusion_role_gcode":"","change_filament_gcode":"","circle_compensation_manual_offset":"0","circle_compensation_speed":["200"],"close_additional_fan_first_x_layers":["1"],"close_fan_the_first_x_layers":["1"],"compatible_printers":[],"compatible_printers_condition":"","complete_print_exhaust_fan_speed":["70"],"cool_plate_temp":["35"],"cool_plate_temp_initial_layer":["35"],"cooling_filter_enabled":"0","cooling_perimeter_transition_distance":["10"],"cooling_slowdown_logic":["uniform_cooling"],"cooling_tube_length":"0","cooling_tube_retraction":"0","counter_coef_1":["0"],"counter_coef_2":["0.008"],"counter_coef_3":["-0.041"],"counter_limit_max":["0.033"],"counter_limit_min":["-0.035"],"curr_bed_type":"Cool Plate","default_acceleration":["6000"],"default_filament_colour":[""],"default_filament_profile":["Bambu PLA Basic @BBL A1"],"default_jerk":"0","default_nozzle_volume_type":["Standard"],"default_print_profile":"0.20mm Standard @BBL A1","deretraction_speed":["30"],"detect_floating_vertical_shell":"1","detect_narrow_internal_solid_infill":"1","detect_overhang_wall":"1","detect_thin_wall":"0","diameter_limit":["50"],"disable_m73":"0","draft_shield":"disabled","during_print_exhaust_fan_speed":["70"],"elefant_foot_compensation":"0.075","embedding_wall_into_infill":"0","emit_machine_limits_to_gcode":"1","enable_arc_fitting":"1","enable_circle_compensation":"0","enable_filament_dynamic_map":"0","enable_filament_ramming":"0","enable_height_slowdown":["0"],"enable_long_retraction_when_cut":"0","enable_mixed_color_sublayer":"0","enable_order_independent_overlap_carving":"0","enable_overhang_bridge_fan":["1"],"enable_overhang_speed":["1"],"enable_pre_heating":"0","enable_pressure_advance":["0"],"enable_prime_tower":"0","enable_support":"0","enable_support_ironing":"0","enable_tower_interface_features":"0","enable_wrapping_detection":"0","enforce_support_layers":"0","eng_plate_temp":["0"],"eng_plate_temp_initial_layer":["0"],"ensure_vertical_shell_thickness":"enabled","exclude_object":"1","extra_loading_move":"0","extruder_ams_count":[],"extruder_clearance_dist_to_rod":"56.5","extruder_clearance_height_to_lid":"150","extruder_clearance_height_to_rod":"27","extruder_clearance_max_radius":"73","extruder_clearance_radius":"76","extruder_colour":["#FCE94F"],"extruder_max_nozzle_count":["1"],"extruder_nozzle_stats":[],"extruder_offset":["0x0"],"extruder_printable_area":[],"extruder_printable_height":[],"extruder_type":["Direct Drive"],"extruder_variant_list":["Direct Drive Standard"],"fan_cooling_layer_time":["80"],"fan_direction":"undefine","fan_kickstart":"0","fan_max_speed":["80"],"fan_min_speed":["60"],"fan_speedup_overhangs":"1","fan_speedup_time":"0","filament_adaptive_volumetric_speed":["0"],"filament_adhesiveness_category":["100"],"filament_bridge_speed":["25"],"filament_change_length":["5"],"filament_change_length_nc":["10"],"filament_colour":["#000000"],"filament_cooling_before_tower":["0"],"filament_cost":["24.99"],"filament_density":["1.26"],"filament_deretraction_speed":["nil"],"filament_dev_ams_drying_ams_limitations":["1"],"filament_dev_ams_drying_heat_distortion_temperature":["45"],"filament_dev_ams_drying_temperature":["45"],"filament_dev_ams_drying_time":["12"],"filament_dev_chamber_drying_bed_temperature":["70"],"filament_dev_chamber_drying_time":["12"],"filament_dev_drying_cooling_temperature":["45"],"filament_dev_drying_softening_temperature":["50"],"filament_diameter":["1.75"],"filament_enable_overhang_speed":["1"],"filament_end_gcode":["; filament end gcode \n\n"],"filament_extruder_compatibility":["0"],"filament_extruder_variant":["Direct Drive Standard"],"filament_flow_ratio":["0.98"],"filament_flush_temp":["0"],"filament_flush_temp_fast":["0"],"filament_flush_volumetric_speed":["0"],"filament_ids":["GFA00"],"filament_is_mixed":["0"],"filament_is_support":["0"],"filament_long_retractions_when_cut":["1"],"filament_map":["1"],"filament_map_2":["1"],"filament_map_mode":"Auto For Flush","filament_max_volumetric_speed":["21"],"filament_metal_stickiness":["None"],"filament_minimal_purge_on_wipe_tower":["15"],"filament_mixed_components":[""],"filament_mixed_gradient":["0"],"filament_mixed_gradient_curve":[""],"filament_mixed_gradient_per_part":["0"],"filament_mixed_gradient_range":[""],"filament_mixed_sublayer_ratios":[""],"filament_notes":"","filament_nozzle_map":["1"],"filament_overhang_1_4_speed":["0"],"filament_overhang_2_4_speed":["50"],"filament_overhang_3_4_speed":["30"],"filament_overhang_4_4_speed":["10"],"filament_overhang_totally_speed":["10"],"filament_pre_cooling_temperature":["0"],"filament_pre_cooling_temperature_nc":["0"],"filament_preheat_temperature_delta":["0"],"filament_prime_volume":["30"],"filament_prime_volume_nc":["60"],"filament_printable":["3"],"filament_ramming_travel_time":["0"],"filament_ramming_travel_time_nc":["0"],"filament_ramming_volumetric_speed":["-1"],"filament_ramming_volumetric_speed_nc":["-1"],"filament_retract_before_wipe":["nil"],"filament_retract_length_nc":["14"],"filament_retract_restart_extra":["nil"],"filament_retract_when_changing_layer":["nil"],"filament_retraction_distances_when_cut":["18"],"filament_retraction_length":["nil"],"filament_retraction_minimum_travel":["nil"],"filament_retraction_speed":["nil"],"filament_scarf_gap":["0%"],"filament_scarf_height":["10%"],"filament_scarf_length":["10"],"filament_scarf_seam_type":["none"],"filament_self_index":["1"],"filament_settings_id":["Flashforge PLA @FF AD5M 0.4 Nozzle"],"filament_shrink":["100%"],"filament_soluble":["0"],"filament_start_gcode":["; filament start gcode\n{if  (bed_temperature[current_extruder] >55)||(bed_temperature_initial_layer[current_extruder] >55)}M106 P3 S200\n{elsif(bed_temperature[current_extruder] >50)||(bed_temperature_initial_layer[current_extruder] >50)}M106 P3 S150\n{elsif(bed_temperature[current_extruder] >45)||(bed_temperature_initial_layer[current_extruder] >45)}M106 P3 S50\n{endif}\n\n{if activate_air_filtration[current_extruder] && support_air_filtration}\nM106 P3 S{during_print_exhaust_fan_speed_num[current_extruder]} \n{endif}"],"filament_tower_interface_pre_extrusion_dist":["10"],"filament_tower_interface_pre_extrusion_length":["0"],"filament_tower_interface_print_temp":["-1"],"filament_tower_interface_purge_volume":["20"],"filament_tower_ironing_area":["4"],"filament_type":["PLA"],"filament_velocity_adaptation_factor":["1"],"filament_vendor":["Bambu Lab"],"filament_volume_map":["0"],"filament_wipe":["nil"],"filament_wipe_distance":["nil"],"filament_z_hop":["nil"],"filament_z_hop_types":["nil"],"filename_format":"{input_filename_base}_{filament_type[0]}_{print_time}.gcode","fill_multiline":"1","filter_out_gap_fill":"0","first_layer_print_sequence":["0"],"first_x_layer_fan_speed":["0"],"first_x_layer_part_fan_speed":["0"],"flush_into_infill":"0","flush_into_objects":"0","flush_into_support":"0","flush_multiplier":["1"],"flush_multiplier_fast":["1.2"],"flush_volumes_matrix":["0"],"flush_volumes_vector":["0"],"from":"project","full_fan_speed_layer":["0"],"fuzzy_skin":"none","fuzzy_skin_first_layer":"0","fuzzy_skin_mode":"displacement","fuzzy_skin_noise_type":"classic","fuzzy_skin_octaves":"4","fuzzy_skin_persistence":"0.5","fuzzy_skin_point_distance":"0.8","fuzzy_skin_scale":"1","fuzzy_skin_thickness":"0.3","gap_infill_speed":["250"],"gcode_add_line_number":"0","gcode_flavor":"klipper","grab_length":["17.4"],"group_algo_with_time":"0","has_filament_switcher":"0","has_scarf_joint_seam":"0","head_wrap_detect_zone":[],"high_current_on_filament_swap":"0","hole_coef_1":["0"],"hole_coef_2":["-0.008"],"hole_coef_3":["0.23415"],"hole_limit_max":["0.22"],"hole_limit_min":["0.088"],"host_type":"octoprint","hot_plate_temp":["65"],"hot_plate_temp_initial_layer":["65"],"hotend_cooling_rate":["2"],"hotend_heating_rate":["2"],"impact_strength_z":["13.8"],"independent_support_layer_height":"1","infill_combination":"0","infill_direction":"45","infill_instead_top_bottom_surfaces":"0","infill_jerk":"9","infill_lock_depth":"1","infill_rotate_step":"0","infill_shift_step":"0.4","infill_wall_overlap":"15%","inherits_group":["","","","",""],"initial_layer_acceleration":["500"],"initial_layer_flow_ratio":"1","initial_layer_infill_speed":["105"],"initial_layer_jerk":"9","initial_layer_line_width":"0.5","initial_layer_print_height":"0.2","initial_layer_speed":["50"],"initial_layer_travel_acceleration":["6000"],"inner_wall_acceleration":["0"],"inner_wall_jerk":"9","inner_wall_line_width":"0.45","inner_wall_speed":["300"],"interface_shells":"0","interlocking_beam":"0","interlocking_beam_layer_count":"2","interlocking_beam_width":"0.8","interlocking_boundary_avoidance":"2","interlocking_depth":"2","interlocking_orientation":"22.5","internal_bridge_support_thickness":"0.8","internal_solid_infill_line_width":"0.42","internal_solid_infill_pattern":"zig-zag","internal_solid_infill_speed":["250"],"ironing_direction":"45","ironing_fan_speed":["-1"],"ironing_flow":"10%","ironing_inset":"0.21","ironing_pattern":"zig-zag","ironing_spacing":"0.15","ironing_speed":"30","ironing_type":"no ironing","is_infill_first":"0","layer_change_gcode":";AFTER_LAYER_CHANGE\n;[layer_z]","layer_height":"0.08","line_width":"0.42","locked_skeleton_infill_pattern":"zigzag","locked_skin_infill_pattern":"crosszag","long_retractions_when_cut":["0"],"long_retractions_when_ec":["0"],"machine_bed_mass_Y":"0","machine_end_gcode":"G1 E-3 F3600\nG0 X50 Y50 F30000\nM104 S0 ; turn off temperature","machine_hotend_change_time":"0","machine_load_filament_time":"0","machine_max_acceleration_e":["5000","5000"],"machine_max_acceleration_extruding":["20000","20000"],"machine_max_acceleration_retracting":["5000","5000"],"machine_max_acceleration_travel":["20000","20000"],"machine_max_acceleration_x":["20000","20000"],"machine_max_acceleration_y":["20000","20000"],"machine_max_acceleration_z":["500","500"],"machine_max_force_Y":"0","machine_max_jerk_e":["2.5","2.5"],"machine_max_jerk_x":["9","9"],"machine_max_jerk_y":["9","9"],"machine_max_jerk_z":["3","3"],"machine_max_printed_mass":"0","machine_max_speed_e":["30","30"],"machine_max_speed_x":["600","600"],"machine_max_speed_y":["600","600"],"machine_max_speed_z":["20","20"],"machine_min_extruding_rate":["0","0"],"machine_min_travel_rate":["0","0"],"machine_pause_gcode":"PAUSE","machine_start_gcode":"M190 S[bed_temperature_initial_layer_single]\nM104 S[nozzle_temperature_initial_layer]\nG90\nM83\nG1 Z5 F6000\nG1 E-0.2 F800\nG1 X110 Y-110 F6000\nG1 E2 F800\nG1 Y-110 X55 Z0.25 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG1 Y-110 X55 Z0.45 F4800\nG1 X-55 E8 F2400\nG1 Y-109.6 F2400\nG1 X55 E5 F2400\nG92 E0","machine_switch_extruder_time":"0","machine_tool_change_time":"0","machine_unload_filament_time":"0","manual_filament_change":"0","master_extruder_id":"1","max_bridge_length":"0","max_layer_height":["0.28"],"max_travel_detour_distance":"0","min_bead_width":"85%","min_feature_size":"25%","min_layer_height":["0.08"],"minimum_sparse_infill_area":"15","mmu_segmented_region_interlocking_depth":"0","mmu_segmented_region_max_width":"0","monotonic_travel_into_wall":"0%","name":"project_settings","no_slow_down_for_cooling_on_outwalls":["0"],"nozzle_diameter":["0.4"],"nozzle_height":"2.5","nozzle_hrc":"0","nozzle_temperature":["220"],"nozzle_temperature_initial_layer":["220"],"nozzle_temperature_range_high":["240"],"nozzle_temperature_range_low":["190"],"nozzle_type":"stainless_steel","nozzle_volume":"0","nozzle_volume_type":["Standard"],"only_one_wall_first_layer":"0","ooze_prevention":"0","other_layers_print_sequence":["0"],"other_layers_print_sequence_nums":"0","outer_wall_acceleration":["5000"],"outer_wall_jerk":"9","outer_wall_line_width":"0.42","outer_wall_speed":["200"],"overhang_1_4_speed":["0"],"overhang_2_4_speed":["50"],"overhang_3_4_speed":["30"],"overhang_4_4_speed":["10"],"overhang_fan_speed":["100"],"overhang_fan_threshold":["50%"],"overhang_threshold_participating_cooling":["95%"],"overhang_totally_speed":["10"],"override_filament_scarf_seam_setting":"0","override_process_overhang_speed":["0"],"parking_pos_retraction":"0","pellet_modded_printer":"0","physical_extruder_map":["0"],"post_process":[],"pre_start_fan_time":["2"],"precise_outer_wall":"0","precise_z_height":"0","preferred_orientation":"0","pressure_advance":["0.02"],"prime_tower_brim_width":"3","prime_tower_enable_framework":"0","prime_tower_extra_rib_length":"0","prime_tower_fillet_wall":"1","prime_tower_flat_ironing":"0","prime_tower_infill_gap":"100%","prime_tower_lift_height":"-1","prime_tower_lift_speed":"90","prime_tower_max_speed":"90","prime_tower_rib_wall":"0","prime_tower_rib_width":"8","prime_tower_skip_points":"1","prime_tower_width":"35","prime_volume_mode":"Default","print_compatible_printers":[],"print_extruder_id":["1"],"print_extruder_variant":["Direct Drive Standard"],"print_flow_ratio":"1","print_in_clockwise":"0","print_sequence":"by layer","print_settings_id":"chromastack","printable_area":["-110x-110","110x-110","110x110","-110x110"],"printable_height":"220","printer_extruder_id":["1"],"printer_extruder_variant":["Direct Drive Standard"],"printer_model":"Flashforge Adventurer 5M","printer_notes":"","printer_settings_id":"Flashforge Adventurer 5M 0.4 Nozzle - update","printer_structure":"undefine","printer_technology":"FFF","printer_variant":"0.4","printhost_authorization_type":"key","printhost_ssl_ignore_revoke":"0","printing_by_object_gcode":"","process_notes":"","purge_in_prime_tower":"1","raft_contact_distance":"0.1","raft_expansion":"1.5","raft_first_layer_density":"90%","raft_first_layer_expansion":"0","raft_layers":"0","reduce_crossing_wall":"0","reduce_fan_stop_start_freq":["1"],"reduce_infill_retraction_mode":"Auto","required_nozzle_HRC":["3"],"resolution":"0.012","retract_before_wipe":["100%"],"retract_length_toolchange":["2"],"retract_lift_above":["0"],"retract_lift_below":["0"],"retract_lift_enforce":["All Surfaces"],"retract_restart_extra":["0"],"retract_restart_extra_toolchange":["0"],"retract_when_changing_layer":["1"],"retraction_distances_when_cut":["18"],"retraction_distances_when_ec":["0"],"retraction_length":["0.8"],"retraction_minimum_travel":["1"],"retraction_speed":["30"],"role_base_wipe_speed":"1","scan_first_layer":"0","scarf_angle_threshold":"155","seam_gap":"15%","seam_placement_away_from_overhangs":"0","seam_position":"aligned","seam_slope_conditional":"1","seam_slope_entire_loop":"0","seam_slope_gap":"0","seam_slope_inner_walls":"1","seam_slope_min_length":"10","seam_slope_start_height":"10%","seam_slope_steps":"10","seam_slope_type":"none","silent_mode":"0","single_extruder_multi_material":"0","skeleton_infill_density":"15%","skeleton_infill_line_width":"0.45","skin_infill_density":"15%","skin_infill_depth":"2","skin_infill_line_width":"0.45","skirt_distance":"2","skirt_height":"1","skirt_loops":"0","skirt_per_object":"1","slice_closing_radius":"0.049","slicing_mode":"regular","slow_down_for_layer_cooling":["1"],"slow_down_layer_time":["6"],"slow_down_min_speed":["20"],"slowdown_end_acc":["100000"],"slowdown_end_height":["400"],"slowdown_end_speed":["1000"],"slowdown_start_acc":["100000"],"slowdown_start_height":["0"],"slowdown_start_speed":["1000"],"small_perimeter_speed":["50%"],"small_perimeter_threshold":["0"],"smooth_coefficient":"80","smooth_speed_discontinuity_area":"1","solid_infill_filament":"1","sparse_infill_acceleration":["100%"],"sparse_infill_anchor":"400%","sparse_infill_anchor_max":"20","sparse_infill_density":"15%","sparse_infill_filament":"1","sparse_infill_lattice_angle_1":"-45","sparse_infill_lattice_angle_2":"45","sparse_infill_line_width":"0.45","sparse_infill_pattern":"grid","sparse_infill_speed":["270"],"spiral_mode":"0","spiral_mode_max_xy_smoothing":"200%","spiral_mode_smooth":"0","standby_temperature_delta":"-5","start_end_points":["30x-3","54x245"],"supertack_plate_temp":["45"],"supertack_plate_temp_initial_layer":["45"],"support_air_filtration":"1","support_angle":"0","support_base_pattern":"default","support_base_pattern_spacing":"2.5","support_bottom_interface_spacing":"0.5","support_bottom_z_distance":"0.2","support_chamber_temp_control":"1","support_cooling_filter":"0","support_critical_regions_only":"0","support_expansion":"0","support_fast_purge_mode":"0","support_filament":"0","support_interface_bottom_layers":"2","support_interface_filament":"0","support_interface_loop_pattern":"0","support_interface_not_for_body":"1","support_interface_pattern":"auto","support_interface_spacing":"0.5","support_interface_speed":["80"],"support_interface_top_layers":"2","support_ironing_direction":"0","support_ironing_flow":"10%","support_ironing_inset":"0","support_ironing_pattern":"zig-zag","support_ironing_spacing":"0.15","support_ironing_speed":"30","support_line_width":"0.42","support_multi_bed_types":"1","support_object_first_layer_gap":"0.2","support_object_skip_flush":"0","support_object_xy_distance":"0.35","support_on_build_plate_only":"0","support_remove_small_overhang":"1","support_speed":["150"],"support_style":"default","support_threshold_angle":"30","support_top_z_distance":"0.2","support_type":"tree(auto)","symmetric_infill_y_axis":"0","temperature_vitrification":["45"],"template_custom_gcode":"","textured_plate_temp":["65"],"textured_plate_temp_initial_layer":["65"],"thick_bridges":"0","thumbnail_size":["50x50"],"thumbnails":"140x110/PNG","thumbnails_format":"PNG","time_cost":"0","time_lapse_gcode":"","timelapse_type":"0","top_area_threshold":"200%","top_color_penetration_layers":"5","top_one_wall_type":"all top","top_shell_layers":"5","top_shell_thickness":"1","top_solid_infill_flow_ratio":["1"],"top_surface_acceleration":["2000"],"top_surface_density":"100%","top_surface_jerk":"9","top_surface_line_width":"0.42","top_surface_pattern":"monotonicline","top_surface_speed":["200"],"top_z_overrides_xy_distance":"0","travel_acceleration":["10000"],"travel_jerk":"9","travel_short_distance_acceleration":["250"],"travel_slope":["3"],"travel_speed":["700"],"travel_speed_z":["0"],"tree_support_branch_angle":"45","tree_support_branch_diameter":"2","tree_support_branch_diameter_angle":"5","tree_support_branch_distance":"5","tree_support_wall_count":"0","upward_compatible_machine":[],"use_firmware_retraction":"0","use_relative_e_distances":"1","version":"01.09.00.00","vertical_shell_speed":["80%"],"volumetric_speed_coefficients":["0 0 0 0 0 0"],"wall_distribution_count":"1","wall_filament":"1","wall_generator":"classic","wall_loops":"2","wall_sequence":"inner wall/outer wall","wall_transition_angle":"10","wall_transition_filter_deviation":"25%","wall_transition_length":"100%","wipe":["1"],"wipe_distance":["2"],"wipe_speed":"80%","wipe_tower_no_sparse_layers":"0","wipe_tower_rotation_angle":"0","wipe_tower_x":["15"],"wipe_tower_y":["206"],"wrapping_detection_gcode":"","wrapping_detection_layers":"20","wrapping_exclude_area":[],"xy_contour_compensation":"0","xy_hole_compensation":"0","z_direction_outwall_speed_continuous":"0","z_hop":["0.4"],"z_hop_types":["Auto Lift"],"z_lift_type":"NormalLift","z_offset":"0"},"perFilament":["activate_air_filtration","additional_cooling_fan_speed","additional_fan_full_speed_layer","chamber_temperatures","circle_compensation_speed","close_additional_fan_first_x_layers","close_fan_the_first_x_layers","complete_print_exhaust_fan_speed","cool_plate_temp","cool_plate_temp_initial_layer","cooling_perimeter_transition_distance","cooling_slowdown_logic","counter_coef_1","counter_coef_2","counter_coef_3","counter_limit_max","counter_limit_min","diameter_limit","during_print_exhaust_fan_speed","eng_plate_temp","eng_plate_temp_initial_layer","fan_cooling_layer_time","fan_max_speed","fan_min_speed","filament_adaptive_volumetric_speed","filament_adhesiveness_category","filament_bridge_speed","filament_change_length","filament_colour","filament_cooling_before_tower","filament_cost","filament_density","filament_deretraction_speed","filament_dev_ams_drying_ams_limitations","filament_dev_ams_drying_heat_distortion_temperature","filament_dev_ams_drying_temperature","filament_dev_ams_drying_time","filament_dev_chamber_drying_bed_temperature","filament_dev_chamber_drying_time","filament_dev_drying_cooling_temperature","filament_dev_drying_softening_temperature","filament_diameter","filament_enable_overhang_speed","filament_end_gcode","filament_extruder_compatibility","filament_extruder_variant","filament_flow_ratio","filament_flush_temp","filament_flush_temp_fast","filament_flush_volumetric_speed","filament_ids","filament_is_support","filament_long_retractions_when_cut","filament_map","filament_max_volumetric_speed","filament_metal_stickiness","filament_minimal_purge_on_wipe_tower","filament_overhang_1_4_speed","filament_overhang_2_4_speed","filament_overhang_3_4_speed","filament_overhang_4_4_speed","filament_overhang_totally_speed","filament_pre_cooling_temperature","filament_pre_cooling_temperature_nc","filament_preheat_temperature_delta","filament_prime_volume","filament_prime_volume_nc","filament_printable","filament_ramming_travel_time","filament_ramming_travel_time_nc","filament_ramming_volumetric_speed","filament_ramming_volumetric_speed_nc","filament_retract_before_wipe","filament_retract_length_nc","filament_retract_restart_extra","filament_retract_when_changing_layer","filament_retraction_distances_when_cut","filament_retraction_length","filament_retraction_minimum_travel","filament_retraction_speed","filament_scarf_gap","filament_scarf_height","filament_scarf_length","filament_scarf_seam_type","filament_self_index","filament_settings_id","filament_shrink","filament_soluble","filament_start_gcode","filament_tower_interface_pre_extrusion_dist","filament_tower_interface_pre_extrusion_length","filament_tower_interface_print_temp","filament_tower_interface_purge_volume","filament_tower_ironing_area","filament_type","filament_velocity_adaptation_factor","filament_vendor","filament_wipe","filament_wipe_distance","filament_z_hop","filament_z_hop_types","flush_volumes_vector","full_fan_speed_layer","hole_coef_1","hole_coef_2","hole_coef_3","hole_limit_max","hole_limit_min","hot_plate_temp","hot_plate_temp_initial_layer","impact_strength_z","long_retractions_when_ec","no_slow_down_for_cooling_on_outwalls","nozzle_temperature","nozzle_temperature_initial_layer","nozzle_temperature_range_high","nozzle_temperature_range_low","overhang_fan_speed","overhang_fan_threshold","override_process_overhang_speed","pre_start_fan_time","reduce_fan_stop_start_freq","required_nozzle_HRC","retraction_distances_when_ec","slow_down_for_layer_cooling","slow_down_layer_time","slow_down_min_speed","supertack_plate_temp","supertack_plate_temp_initial_layer","temperature_vitrification","textured_plate_temp","textured_plate_temp_initial_layer","volumetric_speed_coefficients"]};
+
+const XMLD = '<?xml version="1.0" encoding="UTF-8"?>\n';
+const NS = 'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"'
+  + ' xmlns:BambuStudio="http://schemas.bambulab.com/package/2021"'
+  + ' xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"'
+  + ' requiredextensions="p"';
+const xesc = s => String(s).replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+const fz = v => { const s = (+v).toFixed(6).replace(/0+$/,"").replace(/\.$/,"");
+                  return s === "-0" || s === "" ? "0" : s; };
+// crypto.randomUUID only exists in a secure context. file:// and https:// both
+// qualify, but a copy of this page served over plain http — an intranet share,
+// say — would lose it and take 3MF export down with it. These UUIDs are just
+// identity tags inside the 3MF, so a plain random fallback is fine.
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === "x" ? r : (r & 3 | 8)).toString(16);
+    }));
+
+// Filament 1 is the black that prints the base and any interlayers; the rest
+// follow the stack from the bed up, which is the order they get loaded in.
+function palette(){
+  const p = [{hex:G.blackCol.toUpperCase(), name:"Black"}];
+  for (const k of bandInfo.active)
+    p.push({hex:byKey(k).col.toUpperCase(), name:byKey(k).name});
+  return p;
+}
+
+// Contiguous layer ranges, each owned by one filament. Taken from computeBands,
+// so these boundaries are the same numbers the swap plan prints.
+function filamentRanges(){
+  const {bands, active} = bandInfo;
+  const out = [{lo:0, hi:G.base, ext:1}];
+  active.forEach((k, i) => {
+    const b = bands[k], prev = out[out.length-1].hi;
+    if (b.start > prev) out.push({lo:prev, hi:b.start, ext:1});   // interlayer
+    out.push({lo:b.start, hi:b.start + byKey(k).max, ext:2 + i});
+  });
+  return out.filter(r => r.hi > r.lo);
+}
+
+// A pause belongs on the FIRST layer of the new colour, and Orca keys custom
+// gcode by the top_z of the layer it runs before — hence zOf(lo + 1).
+function swaps(){
+  const r = filamentRanges(), pal = palette(), out = [];
+  for (let i = 1; i < r.length; i++)
+    if (r[i].ext !== r[i-1].ext)
+      out.push({layer:r[i].lo + 1, topZ:zOf(r[i].lo + 1),
+                from:pal[r[i-1].ext - 1], to:pal[r[i].ext - 1]});
+  return out;
+}
+
+// Process settings a banded colour plaque needs. Applied BOTH globally here and
+// as per-object overrides in model_settings.config. The per-object copy is what
+// Chroma wrote, but Orca only surfaces those in the object's own settings panel
+// and slices the rest of the plate from the global process — which came from the
+// template's "0.20mm Standard @BBL A1" and so still said 15% infill and classic
+// walls. Setting them globally is what actually takes effect.
+const PROCESS = {
+  sparse_infill_density:         "100%",
+  sparse_infill_pattern:         "alignedrectilinear",
+  internal_solid_infill_pattern: "alignedrectilinear",
+  top_surface_pattern:           "alignedrectilinear",
+  bottom_surface_pattern:        "alignedrectilinear",
+  wall_generator:                "arachne",
+  seam_position:                 "back",
+  enable_support:                "0",
+};
+
+function projectSettings(){
+  const pal = palette(), n = pal.length;
+  const nz = NOZZLES[G.nozzle] || {machine:{}, filament:{}};
+  // Filament values come from the machine's own PLA profile, not from the Bambu
+  // project the settings template was distilled out of — that one had this
+  // printer running 60/80% fan on a 65 C plate. They have to land BEFORE the
+  // palette expansion so every repeated array carries the right value.
+  const cfg = Object.assign({}, AD5M.cfg, PROCESS, nz.filament);
+  for (const k of AD5M.perFilament)
+    if (Array.isArray(cfg[k])) cfg[k] = new Array(n).fill(cfg[k][0]);
+  cfg.filament_colour     = pal.map(p => p.hex);
+  cfg.filament_self_index = pal.map((_, i) => String(i + 1));
+  cfg.filament_map        = new Array(n).fill("1");
+  cfg.flush_volumes_vector = new Array(n).fill("0");
+  cfg.flush_volumes_matrix = new Array(n * n).fill("0");
+  cfg.layer_height              = String(G.layerH);
+  cfg.initial_layer_print_height = String(G.firstLayer);
+  cfg.print_settings_id = "chromastack";
+  cfg.curr_bed_type = G.bedType;
+  Object.assign(cfg, nz.machine);                // machine + line widths for this nozzle
+  // The app owns the two heights, but a height outside the nozzle's window makes
+  // the project refuse to slice, so clamp here too: the UI clamps as you go, and
+  // this guarantees it regardless of how the value got there.
+  const lo = +(nz.machine.min_layer_height || ["0.02"])[0];
+  const hi = +(nz.machine.max_layer_height || ["0.6"])[0];
+  const fit = v => String(Math.min(hi, Math.max(lo, v)));
+  cfg.layer_height = fit(G.layerH);
+  cfg.initial_layer_print_height = fit(G.firstLayer);
+  return JSON.stringify(cfg, null, 4);
+}
+
+function layerRangesXML(){
+  const L = ['<?xml version="1.0" encoding="utf-8"?>\n<objects>\n <object id="1">\n'];
+  for (const r of filamentRanges())
+    L.push(`  <range min_z="${fz(zOf(r.lo))}" max_z="${fz(zOf(r.hi))}">\n`
+         + `   <option opt_key="extruder">${r.ext}</option>\n`
+         + `   <option opt_key="layer_height">${fz(G.layerH)}</option>\n`
+         + `  </range>\n`);
+  L.push(" </object>\n</objects>\n");
+  return L.join("");
+}
+
+// PausePrint markers (type 1). The AD5M has no colour hardware and an empty
+// change_filament_gcode, so a per-band filament change alone emits NO pause —
+// this marker is what makes the profile's machine_pause_gcode (PAUSE) fire.
+function customGcodeXML(){
+  const L = ['<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n'
+           + '<plate>\n<plate_info id="1" />\n'];
+  for (const s of swaps())
+    L.push(`<layer top_z="${fz(s.topZ)}" type="1" extruder="1" color="" `
+         + `extra="${xesc(`Swap to ${s.to.name} ${s.to.hex}`)}" gcode="M601" />\n`);
+  L.push('<mode value="MultiAsSingle" />\n</plate>\n</custom_gcodes_per_layer>\n');
+  return L.join("");
+}
+
+function modelSettingsXML(name, faces){
+  const m = [];
+  for (const [k, v] of [["name", name], ["extruder", "1"], ...Object.entries(PROCESS)])
+    m.push(`    <metadata key="${k}" value="${xesc(v)}"/>\n`);
+  return XMLD + '<config>\n  <object id="2">\n' + m.join("")
+    + `    <metadata face_count="${faces}"/>\n`
+    + '    <part id="1" subtype="normal_part">\n'
+    + `      <metadata key="name" value="${xesc(name)}"/>\n`
+    + '      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n'
+    + `      <mesh_stat face_count="${faces}" edges_fixed="0" degenerate_facets="0"`
+    + ' facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n'
+    + '    </part>\n  </object>\n  <plate>\n'
+    + '    <metadata key="plater_id" value="1"/>\n'
+    + '    <metadata key="plater_name" value="chromastack"/>\n'
+    + '    <metadata key="locked" value="false"/>\n'
+    + '    <metadata key="gcode_file" value=""/>\n'
+    + '    <metadata key="thumbnail_file" value="Metadata/plate_1.png"/>\n'
+    + '    <model_instance>\n'
+    + '      <metadata key="object_id" value="2"/>\n'
+    + '      <metadata key="instance_id" value="0"/>\n'
+    + '    </model_instance>\n  </plate>\n  <assemble>\n  </assemble>\n</config>\n';
+}
+
+// Every vertex sits on the (column, row, layer) lattice, so it hashes to one
+// integer. Open addressing on typed arrays — a Map with a million-plus entries
+// costs several times this in overhead alone.
+function vertexIndex(w, h, heights){
+  let maxL = 0;
+  for (let p = 0; p < w * h; p++) if (heights[p] > maxL) maxL = heights[p];
+  const stride = maxL + 1, row = w + 1;
+  let cap = 1024;
+  while (cap < (w + 1) * (h + 1) * 2) cap <<= 1;
+  let keys = new Int32Array(cap).fill(-1), vals = new Int32Array(cap);
+  let list = new Int32Array(1024), n = 0;
+  const hash = k => (Math.imul(k, 2654435761) >>> 0);
+
+  function grow(){
+    cap <<= 1;
+    keys = new Int32Array(cap).fill(-1);
+    vals = new Int32Array(cap);
+    const m = cap - 1;
+    for (let v = 0; v < n; v++){
+      let p = hash(list[v]) & m;
+      while (keys[p] !== -1) p = (p + 1) & m;
+      keys[p] = list[v]; vals[p] = v;
+    }
+  }
+  function id(i, j, z){
+    const key = (j * row + i) * stride + z;
+    const m = cap - 1;
+    let p = hash(key) & m;
+    while (keys[p] !== -1){
+      if (keys[p] === key) return vals[p];
+      p = (p + 1) & m;
+    }
+    keys[p] = key; vals[p] = n;
+    if (n >= list.length){ const t = new Int32Array(list.length * 2); t.set(list); list = t; }
+    list[n++] = key;
+    if (n * 4 > cap * 3) grow();
+    return n - 1;
+  }
+  return {id, count: () => n, at: v => {
+    const key = list[v], z = key % stride, rest = (key - z) / stride;
+    const i = rest % row;
+    return [i, (rest - i) / row, z];
+  }};
+}
+
+/* ------------------------------------------------------------------ zip --- */
+
+const CRCT = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++){
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+function crcUpdate(crc, b){
+  for (let i = 0; i < b.length; i++) crc = CRCT[(crc ^ b[i]) & 0xFF] ^ (crc >>> 8);
+  return crc >>> 0;
+}
+
+// Minimal ZIP writer. Deflate comes from the platform's CompressionStream, and
+// the CRC is accumulated in the same pass that feeds the compressor, so the
+// model XML — around 50 MB for a 375x375 plaque — is generated lazily and never
+// held whole. Each entry's `data` is a function returning a fresh iterable.
+async function zipBlob(entries){
+  const TE = new TextEncoder();
+  const parts = [], dir = [];
+  let off = 0;
+  for (const e of entries){
+    const name = TE.encode(e.name);
+    const cstream = new CompressionStream("deflate-raw");
+    const wr = cstream.writable.getWriter(), rd = cstream.readable.getReader();
+    const comp = [];
+    let csize = 0;
+    const pump = (async () => {
+      for (;;){
+        const {done, value} = await rd.read();
+        if (done) break;
+        comp.push(value); csize += value.length;
+      }
+    })();
+    let crc = 0xFFFFFFFF, raw = 0;
+    for (const chunk of e.data()){
+      crc = crcUpdate(crc, chunk); raw += chunk.length;
+      await wr.write(chunk);
+    }
+    await wr.close();
+    await pump;
+    crc = (crc ^ 0xFFFFFFFF) >>> 0;
+
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+    lh.setUint16(8, 8, true);          lh.setUint16(12, 0x2821, true);
+    lh.setUint32(14, crc, true);       lh.setUint32(18, csize, true);
+    lh.setUint32(22, raw, true);       lh.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(lh.buffer), name);
+    for (const c of comp) parts.push(c);
+
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);         cd.setUint16(10, 8, true);
+    cd.setUint16(14, 0x2821, true);    cd.setUint32(16, crc, true);
+    cd.setUint32(20, csize, true);     cd.setUint32(24, raw, true);
+    cd.setUint16(28, name.length, true); cd.setUint32(42, off, true);
+    dir.push(new Uint8Array(cd.buffer), name);
+    off += 30 + name.length + csize;
+  }
+  const dsize = dir.reduce((a, b) => a + b.length, 0);
+  const eo = new DataView(new ArrayBuffer(22));
+  eo.setUint32(0, 0x06054b50, true);
+  eo.setUint16(8, entries.length, true); eo.setUint16(10, entries.length, true);
+  eo.setUint32(12, dsize, true);         eo.setUint32(16, off, true);
+  return new Blob([...parts, ...dir, new Uint8Array(eo.buffer)],
+                  {type:"application/vnd.ms-package.3dmanufacturing-3dmodel+xml"});
+}
+
+/* ---------------------------------------------------------------- build --- */
+
+async function plateThumb(px){
+  const c = document.createElement("canvas");
+  c.width = c.height = px;
+  const x = c.getContext("2d");
+  x.fillStyle = "#000"; x.fillRect(0, 0, px, px);
+  const s = $("cSim"), k = Math.min(px / s.width, px / s.height);
+  const dw = Math.round(s.width * k), dh = Math.round(s.height * k);
+  x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
+  x.drawImage(s, (px - dw) >> 1, (px - dh) >> 1, dw, dh);
+  const blob = await new Promise(r => c.toBlob(r, "image/png"));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function build3MF(){
+  if (typeof CompressionStream === "undefined")
+    throw new Error("this browser has no CompressionStream, which the 3MF writer "
+      + "needs for deflate — use Chrome/Edge 103+, Firefox 113+ or Safari 16.4+");
+  const {w, h, heights} = grid;
+  const TE = new TextEncoder();
+  const name = stem();
+
+  // One walk builds the vertex index and records the triangles at the same time
+  const faces = walkMesh(w, h, heights, null);
+  if (!faces) throw new Error("nothing left to mesh — the hole covers the whole plaque");
+  const vi = vertexIndex(w, h, heights);
+  const idx = new Int32Array(faces * 3);
+  let t = 0;
+  walkMesh(w, h, heights, flipRows(h, (a, b, c) => {
+    idx[t++] = vi.id(a[0], a[1], a[2]);
+    idx[t++] = vi.id(b[0], b[1], b[2]);
+    idx[t++] = vi.id(c[0], c[1], c[2]);
+  }));
+
+  // Centre on the bed: the AD5M plate is centre-origin (-110..110), unlike the
+  // corner-origin Bambu bed the template's settings came from.
+  const cs = G.widthMm / w, ox = w * cs / 2, oy = h * cs / 2;
+  function* objectModel(){
+    yield TE.encode(XMLD + `<model unit="millimeter" xml:lang="en-US" ${NS}>\n`
+      + ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n <resources>\n'
+      + `  <object id="1" p:UUID="${uuid()}" type="model">\n   <mesh>\n    <vertices>\n`);
+    let buf = [];
+    for (let v = 0, n = vi.count(); v < n; v++){
+      const [i, j, z] = vi.at(v);
+      buf.push(`     <vertex x="${fz(i*cs - ox)}" y="${fz(j*cs - oy)}" z="${fz(zOf(z))}"/>\n`);
+      if (buf.length >= 8192){ yield TE.encode(buf.join("")); buf = []; }
+    }
+    if (buf.length) yield TE.encode(buf.join(""));
+    yield TE.encode("    </vertices>\n    <triangles>\n");
+    buf = [];
+    for (let f = 0; f < faces; f++){
+      buf.push(`     <triangle v1="${idx[f*3]}" v2="${idx[f*3+1]}" v3="${idx[f*3+2]}"/>\n`);
+      if (buf.length >= 8192){ yield TE.encode(buf.join("")); buf = []; }
+    }
+    if (buf.length) yield TE.encode(buf.join(""));
+    yield TE.encode("    </triangles>\n   </mesh>\n  </object>\n </resources>\n</model>\n");
+  }
+
+  const rootModel = XMLD + `<model unit="millimeter" xml:lang="en-US" ${NS}>\n`
+    + ' <metadata name="Application">BambuStudio-01.09.00.00</metadata>\n'
+    + ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
+    + ` <metadata name="CreationDate">${new Date().toISOString().slice(0,10)}</metadata>\n`
+    + ` <metadata name="Title">${xesc(name)}</metadata>\n <resources>\n`
+    + `  <object id="2" p:UUID="${uuid()}" type="model">\n   <components>\n`
+    + `    <component p:path="/3D/Objects/object_1.model" objectid="1"`
+    + ` p:UUID="${uuid()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n`
+    + `   </components>\n  </object>\n </resources>\n <build p:UUID="${uuid()}">\n`
+    + `  <item objectid="2" p:UUID="${uuid()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"`
+    + ` printable="1"/>\n </build>\n</model>\n`;
+
+  const txt = s => () => [TE.encode(s)];
+  const bin = b => () => [b];
+  const blob = await zipBlob([
+    {name:"[Content_Types].xml", data: txt(XMLD
+      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
+      + ' <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
+      + ' <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+      + ' <Default Extension="png" ContentType="image/png"/>\n'
+      + ' <Default Extension="gcode" ContentType="text/x.gcode"/>\n</Types>\n')},
+    {name:"_rels/.rels", data: txt(XMLD
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+      + ' <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n'
+      + ' <Relationship Target="/Metadata/plate_1.png" Id="rel-2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>\n'
+      + '</Relationships>\n')},
+    {name:"3D/3dmodel.model", data: txt(rootModel)},
+    {name:"3D/_rels/3dmodel.model.rels", data: txt(XMLD
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+      + ' <Relationship Target="/3D/Objects/object_1.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n'
+      + '</Relationships>\n')},
+    {name:"3D/Objects/object_1.model", data: objectModel},
+    {name:"Metadata/model_settings.config", data: txt(modelSettingsXML(name, faces))},
+    {name:"Metadata/layer_config_ranges.xml", data: txt(layerRangesXML())},
+    {name:"Metadata/custom_gcode_per_layer.xml", data: txt(customGcodeXML())},
+    {name:"Metadata/project_settings.config", data: txt(projectSettings())},
+    {name:"Metadata/plate_1.png", data: bin(await plateThumb(512))},
+    {name:"Metadata/plate_1_small.png", data: bin(await plateThumb(128))},
+  ]);
+  return {blob, faces, verts: vi.count()};
+}
+
+/* -------------------------------------------------------------- exports --- */
+
+function save(blob, name){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+const stem = () => srcName.replace(/\.[^.]+$/, "");
+
+$("btnStl").onclick = () => {
+  render();                                    // free if nothing changed
+  const t0 = performance.now();
+  const buf = buildSTL();
+  save(new Blob([buf], {type:"model/stl"}), stem() + ".stl");
+  const tris = new DataView(buf).getUint32(80, true);
+  $("plan").textContent = `wrote ${stem()}.stl — ${tris.toLocaleString()} triangles, `
+    + `${(buf.byteLength/1048576).toFixed(1)} MB, ${Math.round(performance.now()-t0)} ms\n\n`
+    + swapPlan();
+};
+$("btn3mf").onclick = async () => {
+  render();
+  const b = $("btn3mf"), label = b.textContent;
+  b.disabled = true; b.textContent = "building…";
+  const t0 = performance.now();
+  try {
+    const {blob, faces, verts} = await build3MF();
+    save(blob, stem() + " (AD5M).3mf");
+    const sw = swaps();
+    $("plan").textContent = `wrote ${stem()} (AD5M).3mf — `
+      + `${faces.toLocaleString()} triangles, ${verts.toLocaleString()} vertices, `
+      + `${(blob.size/1048576).toFixed(1)} MB, ${Math.round(performance.now()-t0)} ms\n`
+      + `${palette().length} filaments, ${sw.length} pause${sw.length === 1 ? "" : "s"} `
+      + `at layer${sw.length === 1 ? "" : "s"} ${sw.map(s => s.layer).join(", ")}\n\n`
+      + swapPlan();
+  } catch (err) {
+    $("plan").textContent = "3MF export failed: " + (err && err.message || err)
+      + "\n\n" + swapPlan();
+  } finally {
+    b.disabled = false; b.textContent = label;
+  }
+};
+$("btnPlan").onclick = () => { render();
+  save(new Blob([swapPlan()], {type:"text/plain"}), stem() + " swap plan.txt"); };
+$("btnPng").onclick = () => { render();
+  $("cHgt").toBlob(b => save(b, stem() + " heightmap.png")); };
+
+/* ------------------------------------------------------------------- UI --- */
+
+function buildChannelUI(){
+  const host = $("channels");
+  host.innerHTML = "<h3>Channels</h3>";
+  for (const c of CH){
+    const d = document.createElement("div");
+    d.style.cssText = "margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line)";
+    d.innerHTML = `
+      <div class="chead">
+        <input autocomplete="off" type="checkbox" ${c.on?"checked":""} data-a="on">
+        <span class="name">${c.name}</span>
+        <input autocomplete="off" type="color" value="${c.col}" data-a="col">
+        <label class="adv" style="flex:0 0 auto;color:var(--dim)">
+          <input autocomplete="off" type="checkbox" ${c.grad?"checked":""} data-a="grad"> gradient</label>
+      </div>
+      <div class="row"><label>Threshold</label>
+        <input autocomplete="off" type="range" min="0" max="254" value="${c.thr}" data-a="thr">
+        <span class="val" data-v="thr">${c.thr}</span></div>
+      <div class="row"><label>Layers</label>
+        <input autocomplete="off" type="range" min="1" max="40" value="${c.max}" data-a="max">
+        <span class="val" data-v="max">${c.max}</span></div>
+      <div class="row adv"><label>Min layers</label>
+        <input autocomplete="off" type="range" min="0" max="40" value="${c.min}" data-a="min">
+        <span class="val" data-v="min">${c.min}</span></div>
+      <div class="row adv"><label>Hide distance</label>
+        <input autocomplete="off" type="number" min="0.1" max="8" step="0.05" value="${c.td.toFixed(2)}" data-a="td">
+        <span class="val">mm</span></div>
+      <div class="note adv" data-note></div>`;
+    // No per-control state here: render() reads every control back through
+    // readControls(), so the row only has to say "something changed".
+    d.querySelectorAll("[data-a]").forEach(el => {
+      const poke = () => { if (el.dataset.a === "col") drawStack(); render(); };
+      el.addEventListener("input", poke);
+      el.addEventListener("change", poke);
+    });
+    c.rowEl = d;
+    c.noteEl = d.querySelector("[data-note]");
+    host.appendChild(d);
+  }
+}
+
+// Per-channel reality check: does the band actually get thick enough to reach
+// full colour, and is any of it being spent past the point where it can?
+function updateChannelNotes(){
+  for (const c of CH){
+    if (!c.noteEl) continue;
+    if (!c.on){ c.noteEl.textContent = ""; continue; }
+    const reach = c.max * G.layerH;
+    const aMax = 1 - Math.exp(-4.6 * reach / Math.max(0.01, c.td));
+    const full = Math.ceil(c.td / G.layerH);
+    let msg = `brightest = ${reach.toFixed(2)} mm of ${c.td.toFixed(2)} mm hide distance`
+            + ` → ${(aMax*100).toFixed(0)}% opaque. `;
+    if (c.max > full + 1)
+      msg += `${c.max - full} layers past full colour — height without colour.`;
+    else if (c.max < full)
+      msg += `needs ${full} layers to reach full colour.`;
+    else
+      msg += `just reaches full colour.`;
+    c.noteEl.textContent = msg;
+  }
+}
+
+function drawStack(){
+  const host = $("stack");
+  host.innerHTML = "";
+  order.forEach((k, i) => {
+    const c = byKey(k);
+    const row = document.createElement("div");
+    row.className = "stackrow";
+    row.innerHTML = `<span class="sw" style="background:${c.col}"></span>
+      <span class="lbl">${c.name}${c.on ? "" : " (off)"}</span>
+      <button class="mini" ${i === order.length-1 ? "disabled" : ""}>↑</button>
+      <button class="mini" ${i === 0 ? "disabled" : ""}>↓</button>`;
+    const [up, dn] = row.querySelectorAll("button");
+    up.onclick = () => { [order[i], order[i+1]] = [order[i+1], order[i]]; drawStack(); render(); };
+    dn.onclick = () => { [order[i], order[i-1]] = [order[i-1], order[i]]; drawStack(); render(); };
+    host.appendChild(row);
+  });
+  const names = order.filter(k => byKey(k).on).map(k => byKey(k).name);
+  $("collnote").textContent = (G.collision === "brightest"
+    ? "Each pixel goes to whichever enabled channel sits highest above its own threshold. "
+      + "Whichever channel loses is discarded, so overlapping structures fight cell by cell "
+      + "and break into speckle. "
+    : "Each pixel goes to the highest channel in the stack that clears its threshold — "
+      + names.slice().reverse().join(" > ") + ". ")
+    + "Whatever wins, every band below it is solid underneath, and you see through the "
+    + "thin parts of the top band to the colour below. Put the channel that covers the most "
+    + "area at the BOTTOM (currently " + (names[0] || "—") + ") and turn gradient on for the "
+    + "ones above it — that is what makes overlaps blend instead of posterize.";
+}
+
+// ---------------------------------------------------------------- state ---
+//
+// The DOM is the source of truth. G and CH are SNAPSHOTS of it, refreshed by
+// readControls() at the start of every render and every export. Nothing else
+// writes G from an event handler, so a control can never show one thing while
+// the app runs another — whatever a browser restored across a reload, whatever
+// event did or did not fire on a keyboard-driven select, the value that gets
+// used is the value on screen. The old design had each control's listener write
+// its own G field, and every gap in that (a restored select, a missed event)
+// showed up as "Remove is selected but it is growing".
+
+const NUM  = ["layerH","firstLayer","base","inter","widthMm","dotMm","minFeat",
+              "denoiseMm","minIsland","growBy","holeDia","holeX","holeY"];
+const STR  = ["blackCol","nozzle","bedType","islandMode","collision"];
+const BOOL = ["holeOn"];
+const FMT  = {dotMm: v => v.toFixed(2), minFeat: v => v.toFixed(2),
+              denoiseMm: v => v.toFixed(2), growBy: v => v.toFixed(1),
+              minIsland: v => v < 2 ? "off" : String(v)};
+
+// Code defaults into the controls, once, at startup. After this the DOM leads.
+function pushDefaults(){
+  for (const k of NUM)  $(k).value = G[k];
+  for (const k of STR)  $(k).value = G[k];
+  for (const k of BOOL) $(k).checked = !!G[k];
+}
+
+// Each nozzle has a legal layer-height window (0.6 mm will not go below 0.15),
+// and a height outside it makes the project refuse to slice. Clamp, and write
+// the clamped value back so the control keeps telling the truth.
+function clampToNozzle(){
+  const nz = NOZZLES[G.nozzle], n = nz.machine, f = nz.filament;
+  const lo = +n.min_layer_height[0], hi = +n.max_layer_height[0];
+  const fit = v => Math.min(hi, Math.max(lo, Math.round(v * 1000) / 1000));
+  const moved = [];
+  for (const key of ["layerH", "firstLayer"]){
+    const el = $(key);
+    el.min = lo; el.max = hi;
+    const want = fit(G[key]);
+    if (want !== G[key]) moved.push((key === "layerH" ? "layer" : "first layer") + " " + G[key] + " to " + want + " mm");
+    G[key] = want; el.value = want;
+  }
+  $("noznote").textContent =
+    G.nozzle + " mm nozzle · lines " + n.line_width + " mm · layer height "
+    + lo + "-" + hi + " mm · retract " + n.retraction_length[0] + " mm · "
+    + f.filament_settings_id[0] + ". "
+    + "Nothing narrower than one bead survives the slicer, so a wider nozzle "
+    + "drops more of the fine structure — raise Denoise or the plaque size to suit."
+    + (moved.length ? "  Moved " + moved.join(" and ") + " to stay sliceable." : "");
+}
+
+// Read every control into G and CH, fix up anything dependent, refresh labels.
+// Returns a signature of the whole state so render() can skip redundant work.
+function readControls(){
+  for (const k of NUM){ const v = $(k).value; if (v !== "" && isFinite(+v)) G[k] = +v; }
+  for (const k of STR)  G[k] = $(k).value;
+  for (const k of BOOL) G[k] = $(k).checked;
+
+  for (const c of CH){
+    if (!c.rowEl) continue;
+    const pmin = c.min, pmax = c.max;
+    for (const el of c.rowEl.querySelectorAll("[data-a]")){
+      const a = el.dataset.a, v = el.value;
+      c[a] = el.type === "checkbox" ? el.checked
+           : el.type === "color"    ? v
+           : (v !== "" && isFinite(+v)) ? +v : c[a];
+    }
+    // min stays at or below max; whichever one the user moved wins
+    if (c.min > c.max){
+      if (c.min !== pmin) c.max = c.min; else c.min = c.max;
+      const mn = c.rowEl.querySelector('[data-a="min"]'), mx = c.rowEl.querySelector('[data-a="max"]');
+      if (mn) mn.value = c.min;
+      if (mx) mx.value = c.max;
+    }
+    for (const el of c.rowEl.querySelectorAll("[data-v]"))
+      el.textContent = String(c[el.dataset.v]);
+  }
+
+  clampToNozzle();
+
+  for (const k of NUM){
+    const out = $(k + "V");
+    if (out) out.textContent = FMT[k] ? FMT[k](G[k]) : String(G[k]);
+  }
+  $("growBy").disabled = G.islandMode !== "grow";     // only means anything when growing
+  document.body.classList.toggle("adv-on", $("adv").checked);
+
+  return JSON.stringify([G, order,
+    CH.map(c => [c.on, c.thr, c.min, c.max, c.td, c.grad, c.col])]);
+}
+
+// Every control just says "something changed". Duplicate events are free: render
+// compares the state signature and does nothing if it matches the last one.
+for (const k of [...NUM, ...STR, ...BOOL, "adv"]){
+  if (k === "denoiseMm") continue;
+  $(k).addEventListener("input",  render);
+  $(k).addEventListener("change", render);
+}
+// Denoise filters the source, which is too slow to redo per drag step: the label
+// follows the drag and the work happens on release.
+$("denoiseMm").addEventListener("input", e => {
+  $("denoiseMmV").textContent = (+e.target.value).toFixed(2);
+});
+$("denoiseMm").addEventListener("change", render);
+// The stack list and its note are built from G.collision.
+$("collision").addEventListener("change", () => { readControls(); drawStack(); });
+
+// 1:1 view — the panels are squeezed into a third of the window, which hides
+// exactly the fine fragmentation that matters. Click one to see every dot.
+for (const [id, label] of [["cSrc","Source"], ["cHgt","Height map"], ["cSim","Simulated print"]]){
+  $(id).addEventListener("click", () => {
+    const s = $(id), z = $("zc");
+    z.width = s.width; z.height = s.height;
+    z.getContext("2d").drawImage(s, 0, 0);
+    $("zoomtip").textContent =
+      `${label} — ${s.width}x${s.height}, one pixel = one dot. Click to close.`;
+    $("zoom").classList.add("on");
+  });
+}
+$("zoom").addEventListener("click", () => $("zoom").classList.remove("on"));
+addEventListener("keydown", e => {
+  if (e.key === "Escape") $("zoom").classList.remove("on");
+});
+
+/* ----------------------------------------------------------------- load --- */
+
+function load(file){
+  srcName = file.name;
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => {
+    img = im; imgGen++;
+    buildWork(im);
+    $("srcinfo").textContent = `${srcName} — ${im.width}×${im.height}`
+      + (work.w < im.width ? ` (filtered at ${work.w}×${work.h})` : "");
+    URL.revokeObjectURL(url);
+    render();
+  };
+  im.src = url;
+}
+$("file").addEventListener("change", e => { if (e.target.files[0]) load(e.target.files[0]); });
+
+const drop = $("drop");
+let dragDepth = 0;
+addEventListener("dragenter", e => { e.preventDefault(); if (++dragDepth) drop.classList.add("on"); });
+addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) drop.classList.remove("on"); });
+addEventListener("dragover",  e => e.preventDefault());
+addEventListener("drop", e => {
+  e.preventDefault(); dragDepth = 0; drop.classList.remove("on");
+  const f = [...e.dataTransfer.files].find(f => f.type.startsWith("image/"));
+  if (f) load(f);
+});
+
+pushDefaults();          // code defaults -> DOM, once
+buildChannelUI();        // channel rows are built from CH, which is the same thing
+drawStack();
+render();                // then read it all back: clamps, labels, disabled states
+// If a browser restores form state after our script has run, these catch it —
+// free when nothing changed, because render compares the state signature.
+addEventListener("load", render);
+addEventListener("pageshow", render);
+</script>
+</body>
+</html>
